@@ -483,6 +483,9 @@ function onBarcode(code) {
     startEdit(existing);
     $('barcode-note').textContent = 'このバーコードは「' + existing.name + '」として登録済みです。内容を編集できます。';
   } else {
+    // 新しい商品として読み取ったら、前の入力（商品名・価格・税率・年齢確認）をすべて消してから始める。
+    // 既存の商品を編集している最中は、その商品にバーコードを付ける操作なので消さない
+    if (!editingId) stopEdit();
     $('p-barcode').value = code;
     $('barcode-note').textContent = 'バーコード ' + code + ' を読み取りました。';
     lookupBarcode(code);
