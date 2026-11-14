@@ -6,6 +6,7 @@ import qrcode from 'qrcode-generator';
 import staffHtml from './staff.html';
 import loginHtml from './login.html';
 import setupHtml from './setup.html';
+import displayHtml from './display.html';
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -108,6 +109,61 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
 
 async function sha256(s: string): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s)));
+}
+
+// ---------- QR コードの定期更新 ----------
+// 更新間隔ごとに変わる合言葉（トークン）を QR の URL に入れる。有効な QR を読み取ると「入店確認」が発行され、
+// 更新が有効な店舗では、入店確認がないと注文できない（古い QR の写真や URL の使い回しを防ぐ）
+
+type StoreQr = { id: string; name: string; qr_rotate_minutes: number; qr_secret: string };
+const ROTATE_CHOICES = [0, 1, 5, 15, 60, 1440];
+const PASS_HOURS = 3;
+
+async function hmacHex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return hex(await crypto.subtle.sign('HMAC', key, enc.encode(message)));
+}
+
+async function getStoreQr(env: Env, id: string): Promise<StoreQr | null> {
+  let row = await env.DB.prepare(`SELECT id, name, qr_rotate_minutes, qr_secret FROM stores WHERE id = ?`).bind(id).first<StoreQr>();
+  if (row && !row.qr_secret) {
+    await env.DB.prepare(`UPDATE stores SET qr_secret = ? WHERE id = ? AND qr_secret IS NULL`).bind(randomHex(32), id).run();
+    row = await env.DB.prepare(`SELECT id, name, qr_rotate_minutes, qr_secret FROM stores WHERE id = ?`).bind(id).first<StoreQr>();
+  }
+  return row;
+}
+
+/** いまの時間枠（age = 0）または 1 つ前の時間枠（age = 1）の合言葉 */
+async function qrToken(store: StoreQr, age = 0): Promise<string> {
+  const window = Math.floor(Date.now() / (store.qr_rotate_minutes * 60_000)) - age;
+  return (await hmacHex(store.qr_secret, `qr:${store.id}:${window}`)).slice(0, 20);
+}
+
+/** 切り替わった直後に読み取っても通るよう、1 つ前の QR までは有効にする */
+async function validQrToken(store: StoreQr, token: unknown): Promise<boolean> {
+  if (typeof token !== 'string' || token.length !== 20) return false;
+  const t = enc.encode(token);
+  return timingSafeEqual(t, enc.encode(await qrToken(store, 0))) || timingSafeEqual(t, enc.encode(await qrToken(store, 1)));
+}
+
+async function issuePass(store: StoreQr): Promise<{ pass: string; expiresAt: number }> {
+  const expiresAt = Date.now() + PASS_HOURS * 3600_000;
+  return { pass: `${expiresAt}.${(await hmacHex(store.qr_secret, `pass:${store.id}:${expiresAt}`)).slice(0, 32)}`, expiresAt };
+}
+
+async function validPass(store: StoreQr, pass: unknown): Promise<boolean> {
+  if (typeof pass !== 'string') return false;
+  const [exp, sig] = pass.split('.');
+  if (!/^\d{13}$/.test(exp ?? '') || Number(exp) < Date.now() || (sig ?? '').length !== 32) return false;
+  return timingSafeEqual(enc.encode(sig), enc.encode((await hmacHex(store.qr_secret, `pass:${store.id}:${exp}`)).slice(0, 32)));
+}
+
+/** QR に入れる URL。更新が有効なら合言葉を付ける */
+async function qrUrl(origin: string, store: StoreQr, productId?: string): Promise<string> {
+  const url = new URL(`${origin}/s/${encodeURIComponent(store.id)}`);
+  if (productId) url.searchParams.set('add', productId);
+  if (store.qr_rotate_minutes > 0) url.searchParams.set('t', await qrToken(store));
+  return url.toString();
 }
 
 const clientIp = (c: C) => c.req.header('CF-Connecting-IP') ?? 'unknown';
@@ -340,8 +396,11 @@ app.get('/api/config', async (c) =>
 );
 
 app.get('/api/stores/:id', async (c) => {
-  const store = await c.env.DB.prepare(`SELECT id, name FROM stores WHERE id = ?`).bind(c.req.param('id')).first();
-  if (!store) return c.json({ error: 'store_not_found' }, 404);
+  const row = await c.env.DB.prepare(`SELECT id, name, qr_rotate_minutes FROM stores WHERE id = ?`)
+    .bind(c.req.param('id'))
+    .first<{ id: string; name: string; qr_rotate_minutes: number }>();
+  if (!row) return c.json({ error: 'store_not_found' }, 404);
+  const store = { id: row.id, name: row.name, qrRotation: row.qr_rotate_minutes > 0 };
   const { results } = await c.env.DB.prepare(
     `SELECT id, name, price, tax_rate AS taxRate, age_restricted AS ageRestricted, barcode
      FROM products WHERE store_id = ? AND available = 1 ORDER BY sort, id`,
@@ -351,12 +410,23 @@ app.get('/api/stores/:id', async (c) => {
   return c.json({ store, products: results.map((p) => ({ ...p, ageRestricted: p.ageRestricted === 1 })) });
 });
 
+// 有効な QR（合言葉）と引き換えに入店確認を発行する
+app.post('/api/stores/:id/pass', async (c) => {
+  if (!(await rateLimit(c.env, 'pass', clientIp(c), 120, 300))) return c.json({ error: 'too_many_requests' }, 429);
+  const store = await getStoreQr(c.env, c.req.param('id'));
+  if (!store) return c.json({ error: 'store_not_found' }, 404);
+  if (store.qr_rotate_minutes === 0) return c.json({ required: false });
+  const body = (await c.req.json().catch(() => null)) as { t?: unknown } | null;
+  if (!(await validQrToken(store, body?.t))) return c.json({ error: 'qr_expired' }, 403);
+  return c.json({ required: true, ...(await issuePass(store)) });
+});
+
 app.post('/api/orders', async (c) => {
   // 同じ接続元からの注文作成は 5 分間に 30 回まで（店内 Wi-Fi の共用を考慮した上限）
   if (!(await rateLimit(c.env, 'order', clientIp(c), 30, 300))) return c.json({ error: 'too_many_requests' }, 429);
 
   const body = (await c.req.json().catch(() => null)) as
-    | { storeId?: unknown; items?: unknown; ageConfirmed?: unknown; turnstileToken?: unknown; email?: unknown }
+    | { storeId?: unknown; items?: unknown; ageConfirmed?: unknown; turnstileToken?: unknown; email?: unknown; pass?: unknown }
     | null;
   if (!body || typeof body.storeId !== 'string' || !Array.isArray(body.items)) return c.json({ error: 'bad_request' }, 400);
   // 購入完了メールの送付先（任意）。入力があるのに形式が不正な場合は、届かないまま進まないよう受け付けない
@@ -379,8 +449,10 @@ app.post('/api/orders', async (c) => {
     return c.json({ error: 'verification_failed' }, 403);
   }
 
-  const store = await c.env.DB.prepare(`SELECT id, name FROM stores WHERE id = ?`).bind(body.storeId).first<{ id: string; name: string }>();
+  const store = await getStoreQr(c.env, body.storeId);
   if (!store) return c.json({ error: 'store_not_found' }, 404);
+  // QR の定期更新が有効な店舗では、有効な QR を読み取った端末からしか注文できない
+  if (store.qr_rotate_minutes > 0 && !(await validPass(store, body.pass))) return c.json({ error: 'qr_expired' }, 403);
 
   // 金額は必ずサーバー側の価格から計算する
   const ids = [...qty.keys()];
@@ -799,14 +871,15 @@ function qrSvg(c: C, url: string) {
   const qr = qrcode(0, 'M');
   qr.addData(url);
   qr.make();
-  return c.body(qr.createSvgTag({ cellSize: 8, margin: 32, scalable: true }), 200, { 'Content-Type': 'image/svg+xml' });
+  // 定期更新される QR が古いまま表示されないよう、保存させない
+  return c.body(qr.createSvgTag({ cellSize: 8, margin: 32, scalable: true }), 200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-store' });
 }
 
 app.get('/staff/qr.svg', async (c) => {
-  const storeId = c.req.query('store') ?? '';
-  const store = await c.env.DB.prepare(`SELECT id FROM stores WHERE id = ?`).bind(storeId).first();
+  const store = await getStoreQr(c.env, c.req.query('store') ?? '');
   if (!store) return c.text('store not found', 404);
-  return qrSvg(c, `${new URL(c.req.url).origin}/s/${encodeURIComponent(storeId)}`);
+  c.header('X-QR-Rotate-Minutes', String(store.qr_rotate_minutes));
+  return qrSvg(c, await qrUrl(new URL(c.req.url).origin, store));
 });
 
 // 商品QR：読み取ると注文画面が開き、その商品がカートに入る
@@ -814,16 +887,26 @@ app.get('/staff/product-qr.svg', async (c) => {
   const product = await c.env.DB.prepare(`SELECT id, store_id FROM products WHERE id = ?`)
     .bind(c.req.query('id') ?? '')
     .first<{ id: string; store_id: string }>();
-  if (!product) return c.text('product not found', 404);
-  return qrSvg(
-    c,
-    `${new URL(c.req.url).origin}/s/${encodeURIComponent(product.store_id)}?add=${encodeURIComponent(product.id)}`,
-  );
+  const store = product ? await getStoreQr(c.env, product.store_id) : null;
+  if (!product || !store) return c.text('product not found', 404);
+  return qrSvg(c, await qrUrl(new URL(c.req.url).origin, store, product.id));
 });
 
+// 入口のタブレットなどに映しておく、店舗 QR の表示専用画面
+app.get('/staff/display', (c) => c.html(displayHtml, 200, { 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' }));
+
 app.get('/api/staff/stores', async (c) => {
-  const { results } = await c.env.DB.prepare(`SELECT id, name FROM stores ORDER BY id`).all();
+  const { results } = await c.env.DB.prepare(`SELECT id, name, qr_rotate_minutes AS qrRotateMinutes FROM stores ORDER BY id`).all();
   return c.json({ stores: results });
+});
+
+// QR コードの更新間隔（分）。0 で更新しない
+app.post('/api/staff/stores/:id/qr-rotation', adminOnly, async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { minutes?: unknown } | null;
+  if (typeof body?.minutes !== 'number' || !ROTATE_CHOICES.includes(body.minutes)) return c.json({ error: 'bad_request' }, 400);
+  const res = await c.env.DB.prepare(`UPDATE stores SET qr_rotate_minutes = ? WHERE id = ?`).bind(body.minutes, c.req.param('id')).run();
+  if (res.meta.changes !== 1) return c.json({ error: 'store_not_found' }, 404);
+  return c.json({ ok: true });
 });
 
 app.get('/api/staff/orders', async (c) => {

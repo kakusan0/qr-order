@@ -118,10 +118,42 @@
     return true;
   }
 
-  /** 読み取った QR の文字列を解釈してカートに追加する */
-  function handleCode(text) {
+  // --- 入店確認（QR コードの定期更新が有効な店舗） ---
+  // 有効な QR を読み取ると数時間有効な入店確認が発行され、それがある端末だけが注文できる
+  const rotation = !!data.store.qrRotation;
+  const passKey = 'pass:' + storeId;
+  let pass = '';
+  try {
+    const saved = localStorage.getItem(passKey) || '';
+    if (Number(saved.split('.')[0]) > Date.now()) pass = saved;
+  } catch { /* 保存データが読めなければ未確認として扱う */ }
+  const hasPass = () => !rotation || (pass !== '' && Number(pass.split('.')[0]) > Date.now());
+  const showGate = () => { $('gate').hidden = hasPass(); };
+
+  /** QR の合言葉をサーバーで確かめ、入店確認を受け取る。期限切れなら false */
+  async function redeem(token) {
+    if (!rotation) return true;
+    if (!token) return false;
+    try {
+      const res = await fetch('/api/stores/' + encodeURIComponent(storeId) + '/pass', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: token }),
+      });
+      if (!res.ok) return false;
+      const body = await res.json();
+      if (body.pass) { pass = body.pass; try { localStorage.setItem(passKey, pass); } catch { /* 保存できなくても続行 */ } }
+      showGate();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  const expired = () => { notice('この QR コードは期限が切れています。店頭に表示されている新しい QR コードを読み取ってください。', true); signal('rejected'); return false; };
+
+  /** 読み取った QR・バーコードの文字列を解釈してカートに追加する */
+  async function handleCode(text) {
     // 商品バーコード（JAN）：登録されている商品を探す
     if (/^\d{8,13}$/.test(text)) {
+      if (!hasPass()) { notice('先に、店頭に表示されている QR コードを読み取ってください。', true); signal('rejected'); return false; }
       const p = data.products.find((x) => x.barcode === text);
       if (!p) { notice('このバーコードの商品は販売していません。', true); signal('rejected'); return false; }
       return addProduct(p.id);
@@ -130,8 +162,16 @@
     try { url = new URL(text); } catch { notice('商品の QR コードではありません。', true); signal('rejected'); return false; }
     const parts = url.pathname.split('/');
     const add = url.searchParams.get('add');
-    if (url.origin !== location.origin || parts[1] !== 's' || !add) { notice('商品の QR コードではありません。', true); signal('rejected'); return false; }
-    if (decodeURIComponent(parts[2] || '') !== storeId) { notice('別の店舗の商品です。', true); signal('rejected'); return false; }
+    if (url.origin !== location.origin || parts[1] !== 's') { notice('商品の QR コードではありません。', true); signal('rejected'); return false; }
+    if (decodeURIComponent(parts[2] || '') !== storeId) { notice('別の店舗の QR コードです。', true); signal('rejected'); return false; }
+    // 定期更新が有効な店舗では、QR に入っている合言葉が有効かを確かめる
+    if (rotation && !(await redeem(url.searchParams.get('t')))) return expired();
+    if (!add) {
+      // 店舗の QR（入口用）
+      notice(rotation ? '店頭の QR コードを確認しました。商品をスキャンしてください。' : '店舗の QR コードです。商品の QR コードかバーコードを読み取ってください。', !rotation);
+      signal(rotation ? 'added' : 'rejected');
+      return rotation;
+    }
     return addProduct(add);
   }
 
@@ -211,6 +251,12 @@
 
   async function pay() {
     if (paying || !elements || cart.size === 0) return;
+    if (!hasPass()) {
+      showGate();
+      showError('ご注文には、店頭に表示されている QR コードの読み取りが必要です。');
+      $('gate').scrollIntoView({ block: 'center' });
+      return;
+    }
     if (hasRestricted() && !$('age-ok').checked) {
       showError('年齢確認が必要な商品が含まれています。20 歳以上であることを確認のうえ、チェックを入れてください。');
       $('age-box').scrollIntoView({ block: 'center' });
@@ -242,6 +288,7 @@
           items: [...cart].map(([productId, qty]) => ({ productId, qty })),
           ageConfirmed: hasRestricted() ? $('age-ok').checked : undefined,
           turnstileToken: turnstileToken || undefined,
+          pass: pass || undefined,
           email: $('receipt-email').value.trim() || undefined,
         }),
       });
@@ -249,7 +296,14 @@
       if (!res.ok) {
         if (res.status === 400 && (await res.clone().json().catch(() => ({}))).error === 'bad_email') throw new Error('メールアドレスの形式を確認してください。お支払いは発生していません。');
         if (res.status === 429) throw new Error('注文が集中しています。少し待ってからもう一度お試しください。お支払いは発生していません。');
-        if (res.status === 403) throw new Error('安全確認に失敗しました。ページを再読み込みしてもう一度お試しください。お支払いは発生していません。');
+        if (res.status === 403) {
+          if ((await res.clone().json().catch(() => ({}))).error === 'qr_expired') {
+            pass = ''; try { localStorage.removeItem(passKey); } catch { /* 無視 */ }
+            showGate();
+            throw new Error('店頭の QR コードの確認が切れました。店頭に表示されている QR コードを読み取ってから、もう一度お支払いください。お支払いは発生していません。');
+          }
+          throw new Error('安全確認に失敗しました。ページを再読み込みしてもう一度お試しください。お支払いは発生していません。');
+        }
         throw new Error(res.status === 409
           ? '販売を終了した商品が含まれています。再読み込みしてカートを確認してください。'
           : res.status === 502
@@ -370,8 +424,7 @@
         const now = Date.now();
         // 同じコードを写し続けても通知は1回だけ。いったん外して2秒たつと再度反応する
         if (text !== lastText || now - lastSeen > 2000) {
-          handleCode(text);
-          $('scan-status').textContent = $('toast-text').textContent;
+          handleCode(text).then(() => { $('scan-status').textContent = $('toast-text').textContent; });
         }
         lastText = text;
         lastSeen = now;
@@ -443,10 +496,14 @@
   $('scan-open').hidden = false;
 
   // 標準カメラアプリで商品 QR を読み取って開いた場合（/s/<店舗>?add=<商品ID>）
-  const add = new URLSearchParams(location.search).get('add');
-  if (add) {
-    history.replaceState(null, '', location.pathname); // 再読み込みで二重に追加しない
-    addProduct(add);
-  }
+  const params = new URLSearchParams(location.search);
+  const add = params.get('add'), token = params.get('t');
+  if (add || token) history.replaceState(null, '', location.pathname); // 再読み込みで二重に追加しない・古い合言葉を残さない
   render();
+  const entered = rotation && token ? await redeem(token) : true;
+  if (rotation && token && !entered && !hasPass()) expired();
+  else if (add) {
+    if (hasPass()) addProduct(add); else expired();
+  }
+  showGate();
 })();

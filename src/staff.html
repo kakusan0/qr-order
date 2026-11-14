@@ -135,6 +135,23 @@
       <h2>店舗の QR コード（入口用）</h2>
       <p><a id="qr-link" href="#" target="_blank" rel="noopener"><img id="qr" alt="店舗QRコード" width="240" height="240"></a></p>
       <p class="note">お客様がこの QR を読み取ると注文画面（カート）が開きます。クリックで印刷用に開きます。</p>
+      <p><a id="display-link" href="#" target="_blank" rel="noopener">表示専用の画面を開く（入口のタブレットなどに映す用）</a></p>
+
+      <h2>QR コードの更新</h2>
+      <div class="card form narrow">
+        <label>更新する間隔
+          <select id="qr-rotation">
+            <option value="0">更新しない（印刷した QR をずっと使える）</option>
+            <option value="1">1 分ごと</option>
+            <option value="5">5 分ごと</option>
+            <option value="15">15 分ごと</option>
+            <option value="60">1 時間ごと</option>
+            <option value="1440">1 日ごと</option>
+          </select>
+        </label>
+        <p id="qr-rotation-note" class="note"></p>
+        <p id="qr-rotation-error" class="error" hidden></p>
+      </div>
     </section>
 
     <!-- スタッフ -->
@@ -407,7 +424,7 @@ async function loadProducts() {
   }
 }
 
-let editingId = null, productList = [];
+let editingId = null, productList = [], storeList = [];
 function startEdit(p) {
   editingId = p.id;
   $('form-title').textContent = '商品を編集';
@@ -684,10 +701,45 @@ $('passkey-add').onclick = async () => {
 };
 
 // ---------- 初期化 ----------
+// 定期更新される QR を表示し続けるため、画像を取り直す
+function reloadQrImages() {
+  const s = encodeURIComponent($('store').value);
+  if (!s) return;
+  $('qr').src = '/staff/qr.svg?store=' + s + '&_=' + Date.now();
+  if (rotateMinutes() > 0) {
+    for (const img of document.querySelectorAll('.product-admin img')) img.src = img.src.replace(/&_=\d+$/, '') + '&_=' + Date.now();
+  }
+}
+const storeInfo = () => storeList.find((x) => x.id === $('store').value);
+const rotateMinutes = () => (storeInfo() ? storeInfo().qrRotateMinutes : 0);
+function showRotation() {
+  const m = rotateMinutes();
+  $('qr-rotation').value = String(m);
+  $('qr-rotation').disabled = !isAdmin();
+  $('qr-rotation-note').textContent = m > 0
+    ? '店舗の QR と商品の QR は、この間隔で新しいものに変わります。切り替わった直後は 1 つ前の QR も使えます。印刷した QR は使えなくなるので、表示専用の画面や管理画面に映して使ってください。商品についているバーコード（JAN）はそのまま使えます。お客様は、有効な QR を一度読み取れば約 3 時間は注文できます。'
+    : 'QR コードは変わりません。印刷して掲示・貼付できます。';
+}
+$('qr-rotation').onchange = async () => {
+  $('qr-rotation-error').hidden = true;
+  const minutes = Number($('qr-rotation').value);
+  try {
+    await post('/api/staff/stores/' + encodeURIComponent($('store').value) + '/qr-rotation', { minutes });
+    storeInfo().qrRotateMinutes = minutes;
+  } catch (e) {
+    $('qr-rotation-error').textContent = '変更できませんでした（' + e.message + '）。';
+    $('qr-rotation-error').hidden = false;
+  }
+  showRotation();
+  reloadQrImages();
+};
+
 function setStore() {
   const s = encodeURIComponent($('store').value);
-  $('qr').src = '/staff/qr.svg?store=' + s;
+  $('qr').src = '/staff/qr.svg?store=' + s + '&_=' + Date.now();
   $('qr-link').href = '/staff/qr.svg?store=' + s;
+  $('display-link').href = '/staff/display?store=' + s;
+  showRotation();
   stopEdit();
   refresh();
   loadProducts();
@@ -701,6 +753,7 @@ $('logout').onclick = async () => { try { await post('/api/staff/logout'); } cat
   for (const e of document.querySelectorAll('[data-admin]')) e.hidden = !isAdmin();
   if (!isAdmin()) for (const e of document.querySelectorAll('.split')) e.classList.remove('split');
   const { stores } = await api('/api/staff/stores');
+  storeList = stores;
   for (const s of stores) { const o = el('option', null, s.name); o.value = s.id; $('store').append(o); }
   $('store').onchange = setStore;
   setStore();
@@ -708,6 +761,7 @@ $('logout').onclick = async () => { try { await post('/api/staff/logout'); } cat
   try { tab = sessionStorage.getItem('staffTab') || 'orders'; } catch {}
   showTab(tab === 'accounts' && !isAdmin() ? 'orders' : tab);
   setInterval(refresh, 3000);
+  setInterval(() => { if (rotateMinutes() > 0) reloadQrImages(); }, 15000);
 })();
 </script>
 </body>
