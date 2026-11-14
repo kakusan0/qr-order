@@ -380,16 +380,51 @@
     raf = requestAnimationFrame(tick);
   }
 
+  // 使うカメラ（背面 / 前面）。選んだ向きは次回も使う
+  let facing = 'environment';
+  try { if (localStorage.getItem('scanFacing') === 'user') facing = 'user'; } catch { /* 既定の背面カメラ */ }
+  const openCamera = () => navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing } }, audio: false });
+
+  // カメラが 2 つ以上ある端末でだけ切り替えボタンを出す
+  async function showSwitchIfUseful() {
+    try {
+      const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+      $('scan-switch').hidden = cams.length < 2;
+    } catch { $('scan-switch').hidden = true; }
+  }
+
+  async function switchCamera() {
+    if (!stream) return;
+    $('scan-switch').disabled = true;
+    cancelAnimationFrame(raf);
+    stream.getTracks().forEach((t) => t.stop()); // 2 つ同時に開けない端末があるので先に止める
+    stream = null;
+    facing = facing === 'environment' ? 'user' : 'environment';
+    try {
+      stream = await openCamera();
+    } catch {
+      facing = facing === 'environment' ? 'user' : 'environment'; // 切り替えられなければ元のカメラに戻す
+      try { stream = await openCamera(); } catch { $('scan-switch').disabled = false; stopScan(); return notice('カメラを切り替えられませんでした。', true); }
+    }
+    try { localStorage.setItem('scanFacing', facing); } catch { /* 保存できなくても続行 */ }
+    lastText = '';
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    $('scan-switch').disabled = false;
+    tick();
+  }
+
   async function startScan() {
     unlockAudio(); // ボタン操作の中で音を有効にする
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.jsQR) {
       return notice('このブラウザではカメラを使えません。スマートフォン標準のカメラアプリで商品の QR コードを読み取ってください。', true);
     }
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      stream = await openCamera();
     } catch {
       return notice('カメラを起動できませんでした。ブラウザの設定でカメラの使用を許可してください。', true);
     }
+    showSwitchIfUseful();
     lastText = '';
     $('scanner').hidden = false;
     $('scan-open').hidden = true;
@@ -403,6 +438,7 @@
   $('cart-bar-go').onclick = () => { if (stream) stopScan(); $('confirm').scrollIntoView({ behavior: 'smooth' }); };
   $('scan-open').onclick = startScan;
   $('scan-close').onclick = stopScan;
+  $('scan-switch').onclick = switchCamera;
   document.addEventListener('visibilitychange', () => { if (document.hidden && stream) stopScan(); });
   $('scan-open').hidden = false;
 

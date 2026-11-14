@@ -170,7 +170,7 @@
   <h3>バーコードを読み取る</h3>
   <video id="scan-video" playsinline muted></video>
   <p id="scan-msg" class="note">商品のバーコードをカメラに写してください。読み取ると自動で閉じます。</p>
-  <div class="actions"><button id="scan-cancel" type="button" class="ghost">やめる</button></div>
+  <div class="actions"><button id="scan-switch" type="button" hidden>カメラを切り替える</button><button id="scan-cancel" type="button" class="ghost">やめる</button></div>
 </dialog>
 
 <dialog id="refund-dialog">
@@ -528,17 +528,46 @@ function scanTick() {
   scanRaf = requestAnimationFrame(scanTick);
 }
 
+// 使うカメラ（背面 / 前面）。選んだ向きは次回も使う
+let scanFacing = 'environment';
+try { if (localStorage.getItem('scanFacing') === 'user') scanFacing = 'user'; } catch {}
+const openScanCamera = () => navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: scanFacing }, width: { ideal: 1280 } }, audio: false });
+
+$('scan-switch').onclick = async () => {
+  if (!scanStream) return;
+  $('scan-switch').disabled = true;
+  cancelAnimationFrame(scanRaf);
+  scanStream.getTracks().forEach((t) => t.stop()); // 2 つ同時に開けない端末があるので先に止める
+  scanStream = null;
+  const flip = () => { scanFacing = scanFacing === 'environment' ? 'user' : 'environment'; };
+  flip();
+  try { scanStream = await openScanCamera(); }
+  catch {
+    flip(); // 切り替えられなければ元のカメラに戻す
+    try { scanStream = await openScanCamera(); } catch { $('scan-switch').disabled = false; stopScan(); alert('カメラを切り替えられませんでした。'); return; }
+  }
+  try { localStorage.setItem('scanFacing', scanFacing); } catch {}
+  $('scan-video').srcObject = scanStream;
+  await $('scan-video').play().catch(() => {});
+  $('scan-switch').disabled = false;
+  scanTick();
+};
+
 $('p-scan').onclick = async () => {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.readBarcode || !window.ZXing) {
     alert('このブラウザではカメラでの読み取りができません。バーコードの数字を入力してください。');
     return;
   }
   try {
-    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }, audio: false });
+    scanStream = await openScanCamera();
   } catch {
     alert('カメラを起動できませんでした。ブラウザの設定でカメラの使用を許可してください。');
     return;
   }
+  try {
+    const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+    $('scan-switch').hidden = cams.length < 2; // カメラが 2 つ以上ある端末でだけ出す
+  } catch { $('scan-switch').hidden = true; }
   $('scan-dialog').showModal();
   $('scan-video').srcObject = scanStream;
   await $('scan-video').play().catch(() => {});
