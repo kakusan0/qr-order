@@ -10,6 +10,7 @@
 <script src="/vendor/zxing.min.js" defer></script>
 <script src="/barcode.js" defer></script>
 <script src="/ocr.js" defer></script>
+<script src="/scanview.js" defer></script>
 <script src="/store.js" defer></script>
 </head>
 <body>
@@ -24,10 +25,11 @@
   <section id="scanner" class="card scanner" hidden>
     <div class="scan-frame">
       <video id="scan-video" playsinline muted></video>
+      <div id="scan-guide" class="scan-guide" aria-hidden="true"><i></i><i></i><i></i><i></i><b></b></div>
       <div id="scan-flash" class="scan-flash" aria-hidden="true"></div>
     </div>
     <p id="scan-live" class="scan-live" aria-live="polite">コードを探しています…</p>
-    <p id="scan-status" class="note" aria-live="polite">商品の QR コードまたはバーコードを枠内に写してください。</p>
+    <p id="scan-status" class="note" aria-live="polite">明るい枠の中だけを読み取ります。QR コードまたはバーコード全体が枠に入るように写してください。</p>
     <button id="scan-switch" class="wide" hidden>カメラを切り替える（前面 / 背面）</button>
     <button id="scan-close" class="wide">スキャンを終了</button>
   </section>

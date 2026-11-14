@@ -10,6 +10,7 @@
 <script src="/vendor/zxing.min.js" defer></script>
 <script src="/barcode.js" defer></script>
 <script src="/ocr.js" defer></script>
+<script src="/scanview.js" defer></script>
 <style>
   .app-bar { flex-wrap: wrap; }
   .app-bar .who { display: flex; align-items: center; gap: 8px; font-size: .875rem; color: var(--muted); }
@@ -47,7 +48,7 @@
   input[data-keypad] { font-size: 1.35rem; font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; }
   .scan-live { margin: 10px 0 0; padding: 10px 12px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--text) 6%, transparent); font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .04em; min-height: 2.9em; overflow-wrap: anywhere; }
   .scan-live.ok { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
-  #scan-video { display: block; width: 100%; max-height: 50vh; border-radius: var(--r-md); background: #000; object-fit: cover; }
+  dialog .scan-frame video { max-height: 50vh; }
   .form .field { display: grid; gap: 6px; }
   .form .field > label { font-size: .875rem; color: var(--muted); font-weight: 600; }
   .form .field .actions input { flex: 1; min-width: 0; }
@@ -196,9 +197,12 @@
 
 <dialog id="scan-dialog">
   <h3>バーコードを読み取る</h3>
-  <video id="scan-video" playsinline muted></video>
+  <div class="scan-frame">
+    <video id="scan-video" playsinline muted></video>
+    <div id="scan-guide" class="scan-guide" aria-hidden="true"><i></i><i></i><i></i><i></i><b></b></div>
+  </div>
   <p id="scan-live" class="scan-live" aria-live="polite">バーコードを探しています…</p>
-  <p id="scan-msg" class="note">商品のバーコードをカメラに写してください。線が読めないときは、下の数字を大きく写すと読み取ります。読み取ると自動で閉じます。</p>
+  <p id="scan-msg" class="note">明るい枠の中だけを読み取ります。バーコード全体が枠に入るように写してください。線が読めないときは、下の数字を枠の中に大きく写すと読み取ります。読み取ると自動で閉じます。</p>
   <div class="actions"><button id="scan-switch" type="button" hidden>カメラを切り替える</button><button id="scan-cancel" type="button" class="ghost">やめる</button></div>
 </dialog>
 
@@ -550,10 +554,7 @@ function scanTick() {
   if (!scanStream) return;
   const v = $('scan-video');
   if (v.readyState >= 2 && v.videoWidth) {
-    const scale = Math.min(1, 960 / Math.max(v.videoWidth, v.videoHeight));
-    scanCanvas.width = Math.round(v.videoWidth * scale);
-    scanCanvas.height = Math.round(v.videoHeight * scale);
-    scanCanvas.getContext('2d', { willReadFrequently: true }).drawImage(v, 0, 0, scanCanvas.width, scanCanvas.height);
+    window.drawScanRegion(v, $('scan-guide'), scanCanvas); // 枠の中だけを読み取る
     const code = window.readBarcode(scanCanvas);
     if (code) { stopScan(); onBarcode(code); return; }
     // バーコードの線が 1.5 秒読めなければ、下の数字の文字認識も試す。誤読を避けるため、同じ番号を 2 回続けて読めたら採用する

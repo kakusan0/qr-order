@@ -425,11 +425,7 @@
   function tick() {
     if (!stream) return;
     if (video.readyState >= 2 && video.videoWidth) {
-      const scale = Math.min(1, 960 / Math.max(video.videoWidth, video.videoHeight)); // バーコードの細い線を潰さない大きさ
-      canvas.width = Math.round(video.videoWidth * scale);
-      canvas.height = Math.round(video.videoHeight * scale);
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const ctx = window.drawScanRegion(video, $('scan-guide'), canvas); // 枠の中だけを読み取る
       const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const qr = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
       // QR が写っていなければ、商品バーコードとして読む
@@ -437,6 +433,7 @@
       if (text) {
         // 読み取れた内容をそのまま見せる（QR は URL なので、商品名か「店舗の QR」に置き換える）
         live(/^\d+$/.test(text) ? 'バーコード: ' + text : describeQr(text), true);
+        if (text !== lastText) window.flashGuide($('scan-guide'));
         const now = Date.now();
         // 同じコードを写し続けても通知は1回だけ。いったん外して2秒たつと再度反応する
         if (text !== lastText || now - lastSeen > 2000) {
@@ -520,7 +517,7 @@
     live('コードを探しています…');
     $('scanner').hidden = false;
     $('scan-open').hidden = true;
-    $('scan-status').textContent = '商品の QR コードまたはバーコードを枠内に写してください。線が読めないときは、下の数字を大きく写してください。';
+    $('scan-status').textContent = '明るい枠の中だけを読み取ります。QR コードまたはバーコード全体が枠に入るように写してください。';
     video.srcObject = stream;
     await video.play().catch(() => {});
     tick();
