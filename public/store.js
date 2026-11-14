@@ -39,13 +39,23 @@
   const total = () => [...cart].reduce((s, [id, q]) => s + products.get(id).price * q, 0);
 
   let paying = false;
-  let noticeTimer;
+  // 画面上部に大きく出す通知。スキャン中でもカートまでスクロールせずに結果が分かる
+  let noticeTimer, flashTimer, justAdded = null;
   function notice(msg, warn) {
-    $('notice').textContent = msg;
-    $('notice').className = 'notice' + (warn ? ' warn' : '');
-    $('notice').hidden = false;
+    $('toast-text').textContent = msg;
+    $('toast-icon').textContent = warn ? '!' : '✓';
+    $('toast').className = 'toast' + (warn ? ' warn' : '');
+    $('toast').hidden = false;
+    void $('toast').offsetWidth; // 連続で出したときもアニメーションをやり直す
+    $('toast').classList.add('show');
     clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(() => { $('notice').hidden = true; }, 4000);
+    noticeTimer = setTimeout(() => { $('toast').hidden = true; }, warn ? 4500 : 3000);
+
+    // スキャン中はカメラ映像の上にも ✓ / ! を重ねる
+    $('scan-flash').textContent = warn ? '!' : '✓';
+    $('scan-flash').className = 'scan-flash ' + (warn ? 'ng' : 'ok');
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { $('scan-flash').className = 'scan-flash'; }, 900);
   }
 
   function setQty(id, q) {
@@ -100,8 +110,10 @@
       signal('rejected');
       return false;
     }
+    justAdded = productId;
+    setTimeout(() => { if (justAdded === productId) justAdded = null; }, 2000);
     setQty(productId, 1);
-    notice(p.name + ' をカートに入れました。');
+    notice(p.name + '（' + yen(p.price) + '）をカートに入れました');
     signal('added');
     return true;
   }
@@ -196,7 +208,7 @@
       const p = products.get(id);
       const mark = p.taxRate === 8 ? ' ※' : '';
 
-      const card = el('div', 'card product');
+      const card = el('div', 'card product' + (id === justAdded ? ' added' : ''));
       const name = el('div', 'name');
       name.append(el('div', null, p.name + mark), el('div', 'price', yen(p.price) + '（税込）'));
       const stepper = el('div', 'stepper');
@@ -228,6 +240,18 @@
       else elements.update({ amount: sum });
     }
     $('pay-button').textContent = yen(sum) + ' を支払う';
+
+    // 画面下に常に出すカートの点数と合計
+    const count = [...cart.values()].reduce((a, b) => a + b, 0);
+    $('cart-bar').hidden = !hasItems;
+    document.body.classList.toggle('has-cart-bar', hasItems);
+    $('cart-bar-total').textContent = yen(sum);
+    if ($('cart-bar-count').textContent !== String(count)) {
+      $('cart-bar-count').textContent = count;
+      $('cart-bar-count').classList.remove('bump');
+      void $('cart-bar-count').offsetWidth;
+      $('cart-bar-count').classList.add('bump');
+    }
   }
 
   // --- カメラで商品 QR を読み取る（映像は端末内だけで処理し、送信しない） ---
@@ -259,7 +283,7 @@
         // 同じ QR を写し続けても通知は1回だけ。いったん外して2秒たつと再度反応する
         if (code.data !== lastText || now - lastSeen > 2000) {
           handleCode(code.data);
-          $('scan-status').textContent = $('notice').textContent;
+          $('scan-status').textContent = $('toast-text').textContent;
         }
         lastText = code.data;
         lastSeen = now;
@@ -288,6 +312,7 @@
   }
 
   document.addEventListener('pointerdown', unlockAudio, { once: true });
+  $('cart-bar-go').onclick = () => { if (stream) stopScan(); $('confirm').scrollIntoView({ behavior: 'smooth' }); };
   $('scan-open').onclick = startScan;
   $('scan-close').onclick = stopScan;
   document.addEventListener('visibilitychange', () => { if (document.hidden && stream) stopScan(); });

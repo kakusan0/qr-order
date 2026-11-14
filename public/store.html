@@ -18,14 +18,16 @@
   <button id="scan-open" class="primary wide" hidden>商品の QR コードをスキャン</button>
 
   <section id="scanner" class="card scanner" hidden>
-    <video id="scan-video" playsinline muted></video>
+    <div class="scan-frame">
+      <video id="scan-video" playsinline muted></video>
+      <div id="scan-flash" class="scan-flash" aria-hidden="true"></div>
+    </div>
     <p id="scan-status" class="note" aria-live="polite">商品の QR コードを枠内に写してください。</p>
     <button id="scan-close" class="wide">スキャンを終了</button>
   </section>
 
   <h2>カート</h2>
   <p class="note">表示価格はすべて税込です。※印は軽減税率（8%）対象。</p>
-  <p id="notice" class="notice" role="status" hidden></p>
   <div id="cart"></div>
 
   <section id="confirm" hidden>
@@ -44,6 +46,11 @@
     </div>
   </section>
 </main>
+<div id="toast" class="toast" role="status" aria-live="assertive" hidden><span id="toast-icon" class="toast-icon" aria-hidden="true"></span><span id="toast-text"></span></div>
+<div id="cart-bar" class="cart-bar" hidden>
+  <div><span id="cart-bar-count" class="cart-count">0</span> 点　<strong id="cart-bar-total"></strong></div>
+  <button id="cart-bar-go" class="primary">お支払いへ</button>
+</div>
 <footer>
   <a href="/legal/tokushoho">特定商取引法に基づく表記</a>
   <a href="/legal/terms">利用規約</a>
