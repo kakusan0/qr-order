@@ -86,3 +86,7 @@ button.wide { display: block; width: 100%; margin: 12px 0; }
 .product-admin .state { font-size: .875rem; font-weight: 700; color: var(--accent); }
 .product-admin.off .state { color: var(--warn); }
 .product-admin.off img { opacity: .35; }
+
+button.danger { color: var(--warn); }
+.product-admin .actions { flex-wrap: wrap; }
+.product-admin .actions .primary { flex: 0 1 auto; }

@@ -1,10 +1,10 @@
 # QR オーダー（店頭 QR 注文・事前決済）
 
-店頭の QR コードを読み取り → 商品を選択 → Apple Pay / Google Pay / Amazon Pay で決済 → 受取番号を提示して商品を受け取る、という流れのアプリです。
+店頭の QR コードを読み取り → 商品を選択 → クレジットカード / Apple Pay / Google Pay / Link / PayPay で決済 → 受取番号を提示して商品を受け取る、という流れのアプリです。
 
 - アプリ: Cloudflare Workers（`src/index.ts`）+ 静的アセット（`public/`）
 - データベース: Cloudflare D1（`migrations/`）
-- 決済: Stripe（Apple Pay / Google Pay / Amazon Pay のみ表示。カード情報は当システムを通過・保存しません）
+- 決済: Stripe（カード（JCB ほか）/ Apple Pay / Google Pay / Link / PayPay。表示される手段は Stripe ダッシュボードの「決済手段」の設定に従う。カード情報は当システムを通過・保存しません）
 
 ## 画面
 
@@ -34,7 +34,7 @@ npm run deploy
 
 Stripe 側の設定:
 
-1. ダッシュボードで Apple Pay / Google Pay / Amazon Pay を有効化し、公開ドメインを「支払い方法のドメイン」に登録（Apple Pay に必須）。
+1. ダッシュボードの「決済手段」でカード / Apple Pay / Google Pay / Link / PayPay を有効化し、公開ドメインを「支払い方法のドメイン」に登録（Apple Pay に必須）。
 2. Webhook エンドポイント `https://<ドメイン>/api/stripe/webhook` を追加し、イベント `payment_intent.succeeded` を選択。署名シークレットを `STRIPE_WEBHOOK_SECRET` に設定。
 3. まずテストキー（`sk_test_` / `pk_test_`）で実機確認してから本番キーに切り替え。
 

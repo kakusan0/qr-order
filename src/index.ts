@@ -374,25 +374,31 @@ app.get('/api/staff/products', async (c) => {
   return c.json({ products: results.map((p) => ({ ...p, available: p.available === 1 })) });
 });
 
-app.post('/api/staff/products', async (c) => {
-  const body = (await c.req.json().catch(() => null)) as
-    | { storeId?: unknown; name?: unknown; price?: unknown; taxRate?: unknown }
-    | null;
+/** 商品の入力内容を検証する。不正なら null */
+function parseProduct(body: { name?: unknown; price?: unknown; taxRate?: unknown } | null) {
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
   const price = body?.price;
   const taxRate = body?.taxRate;
   if (
-    !body ||
-    typeof body.storeId !== 'string' ||
     !name ||
     name.length > 60 ||
+    typeof price !== 'number' ||
     !Number.isInteger(price) ||
-    (price as number) < MIN_AMOUNT_JPY || // 1点でも決済できる金額にする
-    (price as number) > MAX_PRICE_JPY ||
+    price < MIN_AMOUNT_JPY || // 1点でも決済できる金額にする
+    price > MAX_PRICE_JPY ||
     (taxRate !== 8 && taxRate !== 10)
   ) {
-    return c.json({ error: 'bad_request' }, 400);
+    return null;
   }
+  return { name, price, taxRate };
+}
+
+app.post('/api/staff/products', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as
+    | { storeId?: unknown; name?: unknown; price?: unknown; taxRate?: unknown }
+    | null;
+  const product = parseProduct(body);
+  if (!product || typeof body?.storeId !== 'string') return c.json({ error: 'bad_request' }, 400);
   const store = await c.env.DB.prepare(`SELECT id FROM stores WHERE id = ?`).bind(body.storeId).first();
   if (!store) return c.json({ error: 'store_not_found' }, 404);
   const id = 'p-' + crypto.randomUUID().replace(/-/g, '').slice(0, 12);
@@ -400,9 +406,27 @@ app.post('/api/staff/products', async (c) => {
     `INSERT INTO products (id, store_id, name, price, tax_rate, available, sort)
      VALUES (?1, ?2, ?3, ?4, ?5, 1, (SELECT COALESCE(MAX(sort), 0) + 1 FROM products WHERE store_id = ?2))`,
   )
-    .bind(id, body.storeId, name, price, taxRate)
+    .bind(id, body.storeId, product.name, product.price, product.taxRate)
     .run();
   return c.json({ id }, 201);
+});
+
+// 編集。QR コード（商品ID）は変わらない。過去の注文は注文時点の名前・価格のまま残る
+app.put('/api/staff/products/:id', async (c) => {
+  const product = parseProduct(await c.req.json().catch(() => null));
+  if (!product) return c.json({ error: 'bad_request' }, 400);
+  const res = await c.env.DB.prepare(`UPDATE products SET name = ?, price = ?, tax_rate = ? WHERE id = ?`)
+    .bind(product.name, product.price, product.taxRate, c.req.param('id'))
+    .run();
+  if (res.meta.changes !== 1) return c.json({ error: 'product_not_found' }, 404);
+  return c.json({ ok: true });
+});
+
+// 削除。過去の注文の明細は商品名・価格を写しで持っているので影響しない
+app.delete('/api/staff/products/:id', async (c) => {
+  const res = await c.env.DB.prepare(`DELETE FROM products WHERE id = ?`).bind(c.req.param('id')).run();
+  if (res.meta.changes !== 1) return c.json({ error: 'product_not_found' }, 404);
+  return c.json({ ok: true });
 });
 
 app.post('/api/staff/products/:id/availability', async (c) => {

@@ -78,74 +78,76 @@
     return addProduct(add);
   }
 
-  // --- Stripe（Apple Pay / Google Pay / Amazon Pay） ---
+  // --- Stripe（カード / Apple Pay / Google Pay / Link / PayPay。表示される手段は Stripe の設定に従う） ---
   let stripe = null, elements = null;
+
+  function payNote(msg) {
+    $('pay-note').textContent = msg;
+    $('pay-note').hidden = !msg;
+  }
 
   function setupPayment(amount) {
     if (!window.Stripe || !config.publishableKey) {
-      $('pay-note').textContent = '現在お支払いを受け付けられません。店舗スタッフにお声がけください。';
-      $('pay-note').hidden = false;
-      return;
+      return payNote('現在お支払いを受け付けられません。店舗スタッフにお声がけください。');
     }
     stripe = Stripe(config.publishableKey, { locale: 'ja' });
     elements = stripe.elements({ mode: 'payment', amount, currency: 'jpy' });
-    const ece = elements.create('expressCheckout', {
-      paymentMethods: { applePay: 'always', googlePay: 'always', link: 'never', amazonPay: 'auto', paypal: 'never', klarna: 'never' },
-      // 使える決済方法のボタンを折りたたまず、すべて縦に並べて表示する
-      layout: { maxColumns: 1, maxRows: 0, overflow: 'never' },
-      buttonHeight: 48,
-    });
-    ece.on('ready', ({ availablePaymentMethods }) => {
-      if (!availablePaymentMethods) {
-        $('pay-note').textContent = 'この端末・ブラウザでは Apple Pay / Google Pay / Amazon Pay をご利用いただけません。ウォレットにカードを登録のうえ、iPhone は Safari、Android は Chrome でお試しください。';
-        $('pay-note').hidden = false;
-      }
-    });
-    ece.on('confirm', async (event) => {
-      if (paying) return;
-      paying = true;
-      try {
-        const { error: submitError } = await elements.submit();
-        if (submitError) throw new Error(submitError.message);
+    const payment = elements.create('payment', { layout: { type: 'accordion', defaultCollapsed: false, radios: true, spacedAccordionItems: false } });
+    payment.on('ready', () => { $('pay-button').hidden = false; });
+    payment.on('loaderror', () => payNote('決済方法を読み込めませんでした。再読み込みしてください。'));
+    payment.mount('#pay');
+  }
 
-        const res = await fetch('/api/orders', {
+  async function pay() {
+    if (paying || !elements || cart.size === 0) return;
+    paying = true;
+    $('pay-button').disabled = true;
+    $('error').hidden = true;
+    payNote('');
+    try {
+      // 入力内容の確認（カード番号の不備などはここで止まり、注文は作られない）
+      const { error: submitError } = await elements.submit();
+      if (submitError) throw new Error(submitError.message);
+
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storeId, items: [...cart].map(([productId, qty]) => ({ productId, qty })) }),
+      });
+      if (!res.ok) {
+        throw new Error(res.status === 409
+          ? '販売を終了した商品が含まれています。再読み込みしてカートを確認してください。'
+          : res.status === 502
+            ? '決済サービスに接続できませんでした。お支払いは発生していません。店舗スタッフにお声がけください。'
+            : '注文を作成できませんでした。お支払いは発生していません。');
+      }
+      const { orderId, clientSecret } = await res.json();
+      localStorage.setItem('lastOrder:' + storeId, orderId);
+
+      // PayPay などは外部の画面へ移動し、完了後に注文状況の画面へ戻る
+      const { error } = await stripe.confirmPayment({
+        elements,
+        clientSecret,
+        confirmParams: { return_url: location.origin + '/order/' + orderId },
+        redirect: 'if_required',
+      });
+      if (error) {
+        fetch('/api/orders/' + orderId + '/client-error', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ storeId, items: [...cart].map(([productId, qty]) => ({ productId, qty })) }),
-        });
-        if (!res.ok) {
-          event.paymentFailed({ reason: 'fail' });
-          throw new Error(res.status === 409
-            ? '販売を終了した商品が含まれています。再読み込みしてカートを確認してください。'
-            : res.status === 502
-              ? '決済サービスに接続できませんでした。お支払いは発生していません。店舗スタッフにお声がけください。'
-              : '注文を作成できませんでした。お支払いは発生していません。');
-        }
-        const { orderId, clientSecret } = await res.json();
-        localStorage.setItem('lastOrder:' + storeId, orderId);
-
-        const { error } = await stripe.confirmPayment({
-          elements,
-          clientSecret,
-          confirmParams: { return_url: location.origin + '/order/' + orderId },
-          redirect: 'if_required',
-        });
-        if (error) {
-          fetch('/api/orders/' + orderId + '/client-error', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: [error.type, error.code, error.decline_code, error.message].filter(Boolean).join(' | ') }),
-          }).catch(() => {});
-          throw new Error(error.message || 'お支払いを完了できませんでした。');
-        }
-        location.href = '/order/' + orderId;
-      } catch (e) {
-        showError(e.message);
-        paying = false;
+          body: JSON.stringify({ message: [error.type, error.code, error.decline_code, error.message].filter(Boolean).join(' | ') }),
+        }).catch(() => {});
+        throw new Error(error.message || 'お支払いを完了できませんでした。');
       }
-    });
-    ece.mount('#pay');
+      location.href = '/order/' + orderId;
+    } catch (e) {
+      showError(e.message);
+      $('error').scrollIntoView({ block: 'center' });
+      paying = false;
+      $('pay-button').disabled = false;
+    }
   }
+  $('pay-button').onclick = pay;
 
   // --- 画面 ---
   function render() {
@@ -186,6 +188,7 @@
       if (!elements) setupPayment(sum);
       else elements.update({ amount: sum });
     }
+    $('pay-button').textContent = yen(sum) + ' を支払う';
   }
 
   // --- カメラで商品 QR を読み取る（映像は端末内だけで処理し、送信しない） ---

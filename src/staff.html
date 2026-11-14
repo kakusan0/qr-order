@@ -22,7 +22,7 @@
   <h2>最近の履歴</h2>
   <div id="done"></div>
 
-  <h2>商品を登録</h2>
+  <h2 id="form-title">商品を登録</h2>
   <form id="product-form" class="card form">
     <label>商品名<input id="p-name" required maxlength="60" autocomplete="off"></label>
     <label>価格（税込・円）<input id="p-price" type="number" inputmode="numeric" required min="50" max="1000000" step="1"></label>
@@ -32,7 +32,7 @@
         <option value="8">8%（軽減税率：持ち帰りの飲食料品など）</option>
       </select>
     </label>
-    <button class="primary">登録する</button>
+    <div class="actions"><button id="p-submit" class="primary">登録する</button><button id="p-cancel" type="button" class="ghost" hidden>キャンセル</button></div>
     <p id="product-error" class="error" hidden></p>
   </form>
 
@@ -133,7 +133,20 @@ function productCard(p) {
     } catch (e) { alert('切り替えできませんでした（' + e.message + '）。'); }
     await loadProducts();
   };
-  info.append(b);
+  const edit = el('button', 'ghost', '編集');
+  edit.onclick = () => startEdit(p);
+  const del = el('button', 'ghost danger', '削除');
+  del.onclick = async () => {
+    if (!confirm('「' + p.name + '」を削除します。印刷済みの QR コードは使えなくなり、元に戻せません。よろしいですか？')) return;
+    del.disabled = true;
+    try { await api('/api/staff/products/' + encodeURIComponent(p.id), { method: 'DELETE' }); }
+    catch (e) { alert('削除できませんでした（' + e.message + '）。'); }
+    if (editingId === p.id) stopEdit();
+    await loadProducts();
+  };
+  const row = el('div', 'actions');
+  row.append(b, edit, del);
+  info.append(row);
   c.append(link, info);
   return c;
 }
@@ -150,20 +163,43 @@ async function loadProducts() {
   }
 }
 
+let editingId = null;
+function startEdit(p) {
+  editingId = p.id;
+  $('form-title').textContent = '商品を編集';
+  $('p-submit').textContent = '保存する';
+  $('p-cancel').hidden = false;
+  $('p-name').value = p.name;
+  $('p-price').value = p.price;
+  $('p-tax').value = String(p.taxRate);
+  $('product-error').hidden = true;
+  $('form-title').scrollIntoView({ behavior: 'smooth' });
+  $('p-name').focus({ preventScroll: true });
+}
+function stopEdit() {
+  editingId = null;
+  $('form-title').textContent = '商品を登録';
+  $('p-submit').textContent = '登録する';
+  $('p-cancel').hidden = true;
+  $('product-form').reset();
+  $('product-error').hidden = true;
+}
+$('p-cancel').onclick = stopEdit;
+
 $('product-form').onsubmit = async (ev) => {
   ev.preventDefault();
-  const btn = ev.target.querySelector('button');
+  const btn = $('p-submit');
   btn.disabled = true;
   $('product-error').hidden = true;
   try {
-    await api('/api/staff/products', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    await api(editingId ? '/api/staff/products/' + encodeURIComponent(editingId) : '/api/staff/products', {
+      method: editingId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ storeId: $('store').value, name: $('p-name').value, price: Number($('p-price').value), taxRate: Number($('p-tax').value) }),
     });
-    ev.target.reset();
+    stopEdit();
     await loadProducts();
   } catch (e) {
-    $('product-error').textContent = '登録できませんでした。商品名（60文字以内）と価格（50〜1,000,000円の整数）を確認してください。';
+    $('product-error').textContent = '保存できませんでした。商品名（60文字以内）と価格（50〜1,000,000円の整数）を確認してください。';
     $('product-error').hidden = false;
   }
   btn.disabled = false;
@@ -173,6 +209,7 @@ function setStore() {
   const s = encodeURIComponent($('store').value);
   $('qr').src = '/staff/qr.svg?store=' + s;
   $('qr-link').href = '/staff/qr.svg?store=' + s;
+  stopEdit();
   refresh();
   loadProducts();
 }
