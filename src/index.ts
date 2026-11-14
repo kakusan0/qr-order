@@ -218,7 +218,7 @@ app.post('/api/orders', async (c) => {
     ),
   ]);
 
-  // Apple Pay / Google Pay は Stripe 上では card 扱い。カード情報は当システムを通過しない
+  // 利用できる決済手段は Stripe ダッシュボードの設定に従う。カード情報は当システムを通過しない
   let pi: { id: string; client_secret: string };
   try {
     pi = await stripe<{ id: string; client_secret: string }>(
@@ -228,7 +228,7 @@ app.post('/api/orders', async (c) => {
     {
       amount: String(total),
       currency: 'jpy',
-      'payment_method_types[]': 'card',
+      'automatic_payment_methods[enabled]': 'true',
       description: `${store.name} 注文 ${orderId}`,
       'metadata[order_id]': orderId,
       'metadata[store_id]': store.id,

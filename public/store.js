@@ -38,9 +38,9 @@
       return;
     }
     stripe = Stripe(config.publishableKey, { locale: 'ja' });
-    elements = stripe.elements({ mode: 'payment', amount, currency: 'jpy', paymentMethodTypes: ['card'] });
+    elements = stripe.elements({ mode: 'payment', amount, currency: 'jpy' });
     const ece = elements.create('expressCheckout', {
-      paymentMethods: { applePay: 'always', googlePay: 'always', link: 'never' },
+      paymentMethods: { applePay: 'always', googlePay: 'always', link: 'never', amazonPay: 'never', paypal: 'never', klarna: 'never' },
       buttonHeight: 48,
     });
     ece.on('ready', ({ availablePaymentMethods }) => {
