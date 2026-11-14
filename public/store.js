@@ -56,25 +56,64 @@
     render();
   }
 
-  /** 商品をカートに1点追加する。追加できたら true */
+  // --- 音とバイブレーションでの通知 ---
+  // 音はブラウザの制約で、画面を一度操作（スキャン開始ボタンなど）したあとでないと鳴らない
+  let audio = null;
+  function unlockAudio() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!audio && AC) audio = new AC();
+      if (audio && audio.state === 'suspended') audio.resume();
+    } catch { /* 音が使えない端末では通知文とバイブレーションのみ */ }
+  }
+  function beep(freq, startAt, duration) {
+    if (!audio || audio.state !== 'running') return;
+    const osc = audio.createOscillator(), gain = audio.createGain();
+    const t = audio.currentTime + startAt;
+    osc.type = 'square';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.25, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + duration + 0.02);
+  }
+  function signal(kind) {
+    try {
+      if (kind === 'added') {
+        beep(1320, 0, 0.12); // 高い音を1回
+        if (navigator.vibrate) navigator.vibrate(60);
+      } else {
+        beep(330, 0, 0.16); beep(330, 0.24, 0.16); // 低い音を2回
+        if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
+      }
+    } catch { /* 通知に失敗しても処理は続ける */ }
+  }
+
+  /** スキャンした商品をカートに入れる。すでに入っている商品は追加せず、音とバイブレーションで知らせる */
   function addProduct(productId) {
     const p = products.get(productId);
-    if (!p) { notice('この商品は現在販売していません。', true); return false; }
-    const q = cart.get(productId) || 0;
-    if (q >= MAX_QTY) { notice(p.name + ' は1回のご注文で' + MAX_QTY + '点までです。', true); return false; }
-    setQty(productId, q + 1);
+    if (!p) { notice('この商品は現在販売していません。', true); signal('rejected'); return false; }
+    if (cart.has(productId)) {
+      notice(p.name + ' はすでにカートに入っています。数量はカートの「＋」で変更してください。', true);
+      signal('rejected');
+      return false;
+    }
+    setQty(productId, 1);
     notice(p.name + ' をカートに入れました。');
+    signal('added');
     return true;
   }
 
   /** 読み取った QR の文字列を解釈してカートに追加する */
   function handleCode(text) {
     let url;
-    try { url = new URL(text); } catch { notice('商品の QR コードではありません。', true); return false; }
+    try { url = new URL(text); } catch { notice('商品の QR コードではありません。', true); signal('rejected'); return false; }
     const parts = url.pathname.split('/');
     const add = url.searchParams.get('add');
-    if (url.origin !== location.origin || parts[1] !== 's' || !add) { notice('商品の QR コードではありません。', true); return false; }
-    if (decodeURIComponent(parts[2] || '') !== storeId) { notice('別の店舗の商品です。', true); return false; }
+    if (url.origin !== location.origin || parts[1] !== 's' || !add) { notice('商品の QR コードではありません。', true); signal('rejected'); return false; }
+    if (decodeURIComponent(parts[2] || '') !== storeId) { notice('別の店舗の商品です。', true); signal('rejected'); return false; }
     return addProduct(add);
   }
 
@@ -217,11 +256,10 @@
       const code = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
       if (code && code.data) {
         const now = Date.now();
-        // 同じ QR を写し続けても1回だけ追加する。いったん外して2秒たつと、もう1点追加できる
+        // 同じ QR を写し続けても通知は1回だけ。いったん外して2秒たつと再度反応する
         if (code.data !== lastText || now - lastSeen > 2000) {
-          const ok = handleCode(code.data);
+          handleCode(code.data);
           $('scan-status').textContent = $('notice').textContent;
-          if (ok && navigator.vibrate) navigator.vibrate(60);
         }
         lastText = code.data;
         lastSeen = now;
@@ -231,6 +269,7 @@
   }
 
   async function startScan() {
+    unlockAudio(); // ボタン操作の中で音を有効にする
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.jsQR) {
       return notice('このブラウザではカメラを使えません。スマートフォン標準のカメラアプリで商品の QR コードを読み取ってください。', true);
     }
@@ -248,6 +287,7 @@
     tick();
   }
 
+  document.addEventListener('pointerdown', unlockAudio, { once: true });
   $('scan-open').onclick = startScan;
   $('scan-close').onclick = stopScan;
   document.addEventListener('visibilitychange', () => { if (document.hidden && stream) stopScan(); });
