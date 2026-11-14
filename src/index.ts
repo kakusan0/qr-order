@@ -339,7 +339,7 @@ app.get('/api/stores/:id', async (c) => {
   const store = await c.env.DB.prepare(`SELECT id, name FROM stores WHERE id = ?`).bind(c.req.param('id')).first();
   if (!store) return c.json({ error: 'store_not_found' }, 404);
   const { results } = await c.env.DB.prepare(
-    `SELECT id, name, price, tax_rate AS taxRate, age_restricted AS ageRestricted
+    `SELECT id, name, price, tax_rate AS taxRate, age_restricted AS ageRestricted, barcode
      FROM products WHERE store_id = ? AND available = 1 ORDER BY sort, id`,
   )
     .bind(store.id)
@@ -950,7 +950,7 @@ app.post('/api/staff/orders/:id/refund', adminOnly, async (c) => {
 
 app.get('/api/staff/products', async (c) => {
   const { results } = await c.env.DB.prepare(
-    `SELECT id, name, price, tax_rate AS taxRate, available, age_restricted AS ageRestricted
+    `SELECT id, name, price, tax_rate AS taxRate, available, age_restricted AS ageRestricted, barcode
      FROM products WHERE store_id = ? ORDER BY sort, id`,
   )
     .bind(c.req.query('store') ?? '')
@@ -961,8 +961,23 @@ app.get('/api/staff/products', async (c) => {
   });
 });
 
+/** バーコード（8・12・13 桁）のチェックデジットが正しいか */
+function validBarcode(s: string): boolean {
+  if (!/^(\d{8}|\d{12,13})$/.test(s)) return false;
+  const d = [...s].map(Number);
+  const check = d.pop()!;
+  const sum = d.reverse().reduce((a, n, i) => a + n * (i % 2 === 0 ? 3 : 1), 0);
+  return (10 - (sum % 10)) % 10 === check;
+}
+
+const isUniqueViolation = (e: unknown) => e instanceof Error && /UNIQUE constraint failed/i.test(e.message);
+
 /** 商品の入力内容を検証する。不正なら null */
-function parseProduct(body: { name?: unknown; price?: unknown; taxRate?: unknown; ageRestricted?: unknown } | null) {
+function parseProduct(
+  body: { name?: unknown; price?: unknown; taxRate?: unknown; ageRestricted?: unknown; barcode?: unknown } | null,
+) {
+  const barcode = typeof body?.barcode === 'string' ? body.barcode.trim() : '';
+  if (barcode && !validBarcode(barcode)) return null;
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
   const price = body?.price;
   const taxRate = body?.taxRate;
@@ -977,24 +992,29 @@ function parseProduct(body: { name?: unknown; price?: unknown; taxRate?: unknown
   ) {
     return null;
   }
-  return { name, price, taxRate, ageRestricted: body?.ageRestricted === true ? 1 : 0 };
+  return { name, price, taxRate, ageRestricted: body?.ageRestricted === true ? 1 : 0, barcode: barcode || null };
 }
 
 app.post('/api/staff/products', adminOnly, async (c) => {
   const body = (await c.req.json().catch(() => null)) as
-    | { storeId?: unknown; name?: unknown; price?: unknown; taxRate?: unknown; ageRestricted?: unknown }
+    | { storeId?: unknown; name?: unknown; price?: unknown; taxRate?: unknown; ageRestricted?: unknown; barcode?: unknown }
     | null;
   const product = parseProduct(body);
   if (!product || typeof body?.storeId !== 'string') return c.json({ error: 'bad_request' }, 400);
   const store = await c.env.DB.prepare(`SELECT id FROM stores WHERE id = ?`).bind(body.storeId).first();
   if (!store) return c.json({ error: 'store_not_found' }, 404);
   const id = 'p-' + randomHex(6);
-  await c.env.DB.prepare(
-    `INSERT INTO products (id, store_id, name, price, tax_rate, age_restricted, available, sort)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, (SELECT COALESCE(MAX(sort), 0) + 1 FROM products WHERE store_id = ?2))`,
-  )
-    .bind(id, body.storeId, product.name, product.price, product.taxRate, product.ageRestricted)
-    .run();
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO products (id, store_id, name, price, tax_rate, age_restricted, barcode, available, sort)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, (SELECT COALESCE(MAX(sort), 0) + 1 FROM products WHERE store_id = ?2))`,
+    )
+      .bind(id, body.storeId, product.name, product.price, product.taxRate, product.ageRestricted, product.barcode)
+      .run();
+  } catch (e) {
+    if (isUniqueViolation(e)) return c.json({ error: 'barcode_taken' }, 409);
+    throw e;
+  }
   return c.json({ id }, 201);
 });
 
@@ -1002,9 +1022,17 @@ app.post('/api/staff/products', adminOnly, async (c) => {
 app.put('/api/staff/products/:id', adminOnly, async (c) => {
   const product = parseProduct(await c.req.json().catch(() => null));
   if (!product) return c.json({ error: 'bad_request' }, 400);
-  const res = await c.env.DB.prepare(`UPDATE products SET name = ?, price = ?, tax_rate = ?, age_restricted = ? WHERE id = ?`)
-    .bind(product.name, product.price, product.taxRate, product.ageRestricted, c.req.param('id'))
-    .run();
+  let res;
+  try {
+    res = await c.env.DB.prepare(
+      `UPDATE products SET name = ?, price = ?, tax_rate = ?, age_restricted = ?, barcode = ? WHERE id = ?`,
+    )
+      .bind(product.name, product.price, product.taxRate, product.ageRestricted, product.barcode, c.req.param('id'))
+      .run();
+  } catch (e) {
+    if (isUniqueViolation(e)) return c.json({ error: 'barcode_taken' }, 409);
+    throw e;
+  }
   if (res.meta.changes !== 1) return c.json({ error: 'product_not_found' }, 404);
   return c.json({ ok: true });
 });

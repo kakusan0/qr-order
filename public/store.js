@@ -120,6 +120,12 @@
 
   /** 読み取った QR の文字列を解釈してカートに追加する */
   function handleCode(text) {
+    // 商品バーコード（JAN）：登録されている商品を探す
+    if (/^\d{8,13}$/.test(text)) {
+      const p = data.products.find((x) => x.barcode === text);
+      if (!p) { notice('このバーコードの商品は販売していません。', true); signal('rejected'); return false; }
+      return addProduct(p.id);
+    }
     let url;
     try { url = new URL(text); } catch { notice('商品の QR コードではありません。', true); signal('rejected'); return false; }
     const parts = url.pathname.split('/');
@@ -304,7 +310,7 @@
       tr.append(el('td', null, p.name + mark + ' × ' + q), el('td', 'num', yen(p.price * q)));
       rows.push(tr);
     }
-    $('cart').replaceChildren(...(cards.length ? cards : [el('p', 'note', 'カートは空です。商品の QR コードをスキャンしてください。')]));
+    $('cart').replaceChildren(...(cards.length ? cards : [el('p', 'note', 'カートは空です。商品の QR コードまたはバーコードをスキャンしてください。')]));
 
     const tr = el('tr', 'sum');
     tr.append(el('td', null, '合計（税込）'), el('td', 'num', yen(sum)));
@@ -351,21 +357,23 @@
   function tick() {
     if (!stream) return;
     if (video.readyState >= 2 && video.videoWidth) {
-      const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
+      const scale = Math.min(1, 960 / Math.max(video.videoWidth, video.videoHeight)); // バーコードの細い線を潰さない大きさ
       canvas.width = Math.round(video.videoWidth * scale);
       canvas.height = Math.round(video.videoHeight * scale);
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
-      if (code && code.data) {
+      const qr = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+      // QR が写っていなければ、商品バーコードとして読む
+      const text = (qr && qr.data) || (window.readBarcode ? window.readBarcode(canvas) : null);
+      if (text) {
         const now = Date.now();
-        // 同じ QR を写し続けても通知は1回だけ。いったん外して2秒たつと再度反応する
-        if (code.data !== lastText || now - lastSeen > 2000) {
-          handleCode(code.data);
+        // 同じコードを写し続けても通知は1回だけ。いったん外して2秒たつと再度反応する
+        if (text !== lastText || now - lastSeen > 2000) {
+          handleCode(text);
           $('scan-status').textContent = $('toast-text').textContent;
         }
-        lastText = code.data;
+        lastText = text;
         lastSeen = now;
       }
     }
@@ -385,7 +393,7 @@
     lastText = '';
     $('scanner').hidden = false;
     $('scan-open').hidden = true;
-    $('scan-status').textContent = '商品の QR コードを枠内に写してください。';
+    $('scan-status').textContent = '商品の QR コードまたはバーコードを枠内に写してください。';
     video.srcObject = stream;
     await video.play().catch(() => {});
     tick();
