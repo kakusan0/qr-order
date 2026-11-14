@@ -65,7 +65,9 @@
           event.paymentFailed({ reason: 'fail' });
           throw new Error(res.status === 409
             ? '販売を終了した商品が含まれています。再読み込みして選び直してください。'
-            : '注文を作成できませんでした。お支払いは発生していません。');
+            : res.status === 502
+              ? '決済サービスに接続できませんでした。お支払いは発生していません。店舗スタッフにお声がけください。'
+              : '注文を作成できませんでした。お支払いは発生していません。');
         }
         const { orderId, clientSecret } = await res.json();
         localStorage.setItem('lastOrder:' + storeId, orderId);
