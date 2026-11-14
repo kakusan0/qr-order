@@ -6,6 +6,7 @@
 <meta name="robots" content="noindex">
 <title>店舗管理</title>
 <link rel="stylesheet" href="/style.css">
+<script src="/passkey.js"></script>
 <style>
   body { min-height: 100vh; }
   .app-bar { position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
@@ -62,6 +63,7 @@
     <button role="tab" data-tab="products" aria-selected="false">商品</button>
     <button role="tab" data-tab="qr" aria-selected="false">店舗 QR</button>
     <button role="tab" data-tab="accounts" aria-selected="false" data-admin hidden>スタッフ</button>
+    <button role="tab" data-tab="me" aria-selected="false">パスキー</button>
   </nav>
 
   <main class="content">
@@ -116,8 +118,7 @@
         <section>
           <h2>スタッフを追加</h2>
           <form id="account-form" class="card form">
-            <label>ユーザー名（半角英小文字・数字・._- の 3〜32 文字）<input id="a-username" required pattern="[a-z0-9][a-z0-9._\-]{2,31}" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
-            <label>パスワード（10 文字以上）<input id="a-password" type="password" required minlength="10" autocomplete="new-password"></label>
+            <label>メールアドレス<input id="a-email" type="email" required autocomplete="off" autocapitalize="none" spellcheck="false"></label>
             <label>権限
               <select id="a-role">
                 <option value="staff">スタッフ（受け渡し・年齢確認・商品の有効/無効）</option>
@@ -125,15 +126,25 @@
               </select>
             </label>
             <button class="primary">追加する</button>
+            <p id="account-note" class="note" hidden></p>
             <p id="account-error" class="error" hidden></p>
           </form>
         </section>
         <section>
           <h2>スタッフ一覧</h2>
-          <p class="note">オーナー（ユーザー名 owner）は一覧に出ません。パスワードは Cloudflare の設定 STAFF_PASSWORD で管理します。</p>
+          <p class="note">追加されたスタッフは、セットアップ画面でメールアドレスを入力し、届いた確認コードで本人確認をしてからパスキーを登録します。端末をなくした・替えた場合は「再セットアップ」を押してください。</p>
           <div id="accounts" class="grid"></div>
         </section>
       </div>
+    </section>
+
+    <!-- 自分のパスキー -->
+    <section data-panel="me" hidden>
+      <h2>自分のパスキー</h2>
+      <p class="note">ログインに使う端末の一覧です。スマホとパソコンなど、2 台以上を登録しておくと、1 台をなくしてもログインできます。追加したい端末でこの画面を開き、「この端末を追加」を押してください。</p>
+      <div id="passkeys" class="grid"></div>
+      <p><button id="passkey-add" class="primary">この端末を追加</button></p>
+      <p id="passkey-error" class="error" hidden></p>
     </section>
   </main>
 </div>
@@ -172,6 +183,7 @@ function showTab(name) {
   try { sessionStorage.setItem('staffTab', name); } catch {}
   if (name === 'products') loadProducts();
   if (name === 'accounts') loadAccounts();
+  if (name === 'me') loadPasskeys();
 }
 for (const b of document.querySelectorAll('.tabs [data-tab]')) b.onclick = () => showTab(b.dataset.tab);
 
@@ -370,28 +382,28 @@ $('product-form').onsubmit = async (ev) => {
 function accountCard(a) {
   const c = el('div', 'order account');
   const info = el('div', 'info');
-  info.append(el('div', 'pname', a.username), el('div', 'note', (a.role === 'admin' ? '管理者' : 'スタッフ') + ' / ' + (a.active ? '有効' : '停止中')));
+  const state = !a.active ? '停止中' : a.passkeys > 0 ? 'パスキー登録済み（' + a.passkeys + '）' : 'セットアップ待ち';
+  info.append(el('div', 'pname', a.email + (a.self ? '（自分）' : '')), el('div', 'note', (a.role === 'admin' ? '管理者' : 'スタッフ') + ' / ' + state));
+  if (a.active && a.passkeys > 0 && a.setupAllowed) info.append(el('span', 'tag', '再セットアップ受付中'));
   const row = el('div', 'actions');
-  const toggle = el('button', 'ghost', a.active ? '停止する' : '再開する');
-  toggle.onclick = async () => {
-    toggle.disabled = true;
-    try { await post('/api/staff/accounts/' + a.id + '/active', { active: !a.active }); } catch (e) { alert('変更できませんでした（' + e.message + '）。'); }
+  const run = async (btn, fn) => {
+    btn.disabled = true;
+    try { await fn(); }
+    catch (e) { alert(e.message === 'last_admin' ? '最後の管理者は停止・削除できません。' : '変更できませんでした（' + e.message + '）。'); }
     await loadAccounts();
   };
-  const pw = el('button', 'ghost', 'パスワード変更');
-  pw.onclick = async () => {
-    const password = prompt(a.username + ' の新しいパスワード（10 文字以上）');
-    if (password == null) return;
-    try { await post('/api/staff/accounts/' + a.id + '/password', { password }); alert('変更しました。このスタッフは再ログインが必要です。'); }
-    catch (e) { alert('変更できませんでした。10 文字以上で入力してください。'); }
+  const toggle = el('button', 'ghost', a.active ? '停止する' : '再開する');
+  toggle.onclick = () => run(toggle, () => post('/api/staff/accounts/' + a.id + '/active', { active: !a.active }));
+  const reset = el('button', 'ghost', '再セットアップ');
+  reset.onclick = () => {
+    if (confirm(a.email + ' の登録済みパスキーをすべて無効にし、メールの確認コードで登録し直せるようにします。よろしいですか？')) {
+      run(reset, () => post('/api/staff/accounts/' + a.id + '/reset'));
+    }
   };
   const del = el('button', 'ghost danger', '削除');
-  del.onclick = async () => {
-    if (!confirm(a.username + ' を削除します。よろしいですか？')) return;
-    try { await api('/api/staff/accounts/' + a.id, { method: 'DELETE' }); } catch (e) { alert('削除できませんでした（' + e.message + '）。'); }
-    await loadAccounts();
-  };
-  row.append(toggle, pw, del);
+  del.onclick = () => { if (confirm(a.email + ' を削除します。よろしいですか？')) run(del, () => api('/api/staff/accounts/' + a.id, { method: 'DELETE' })); };
+  row.append(toggle, reset);
+  if (!a.self) row.append(del);
   c.append(info, row);
   return c;
 }
@@ -400,7 +412,7 @@ async function loadAccounts() {
   if (!isAdmin()) return;
   try {
     const { accounts } = await api('/api/staff/accounts');
-    $('accounts').replaceChildren(...(accounts.length ? accounts.map(accountCard) : [el('p', 'note', 'スタッフはまだ登録されていません。')]));
+    $('accounts').replaceChildren(...accounts.map(accountCard));
   } catch (e) {
     $('accounts').replaceChildren(el('p', 'error', 'スタッフ一覧を取得できません。'));
   }
@@ -408,15 +420,58 @@ async function loadAccounts() {
 
 $('account-form').onsubmit = async (ev) => {
   ev.preventDefault();
-  $('account-error').hidden = true;
+  $('account-error').hidden = true; $('account-note').hidden = true;
   try {
-    await post('/api/staff/accounts', { username: $('a-username').value, password: $('a-password').value, role: $('a-role').value });
+    const { invited } = await post('/api/staff/accounts', { email: $('a-email').value, role: $('a-role').value });
+    $('account-note').textContent = invited
+      ? '追加し、案内メールを送りました。'
+      : '追加しました。案内メールは送れなかったため、セットアップ画面（' + location.origin + '/staff/setup）を本人に伝えてください。';
+    $('account-note').hidden = false;
     ev.target.reset();
     await loadAccounts();
   } catch (e) {
-    $('account-error').textContent = e.message === 'username_taken' ? 'そのユーザー名はすでに使われています。' : '追加できませんでした。ユーザー名とパスワードの条件を確認してください。';
+    $('account-error').textContent = e.message === 'email_taken' ? 'そのメールアドレスはすでに登録されています。' : '追加できませんでした。メールアドレスを確認してください。';
     $('account-error').hidden = false;
   }
+};
+
+// ---------- 自分のパスキー ----------
+const dateTime = (s) => s ? new Date(s).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'なし';
+async function loadPasskeys() {
+  try {
+    const { passkeys } = await api('/api/staff/passkeys');
+    $('passkeys').replaceChildren(...passkeys.map((k) => {
+      const c = el('div', 'order account');
+      const info = el('div', 'info');
+      info.append(el('div', 'pname', k.label || 'パスキー'), el('div', 'note', '最終利用: ' + dateTime(k.lastUsedAt)));
+      c.append(info);
+      if (passkeys.length > 1) {
+        const del = el('button', 'ghost danger', '削除');
+        del.onclick = async () => {
+          if (!confirm('「' + (k.label || 'パスキー') + '」を削除します。その端末ではログインできなくなります。よろしいですか？')) return;
+          try { await api('/api/staff/passkeys/' + encodeURIComponent(k.id), { method: 'DELETE' }); } catch (e) { alert('削除できませんでした。'); }
+          await loadPasskeys();
+        };
+        c.append(del);
+      }
+      return c;
+    }));
+  } catch (e) {
+    $('passkeys').replaceChildren(el('p', 'error', 'パスキーの一覧を取得できません。'));
+  }
+}
+$('passkey-add').onclick = async () => {
+  $('passkey-add').disabled = true; $('passkey-error').hidden = true;
+  try {
+    const { options, challengeId } = await post('/api/staff/passkeys/options');
+    const response = await passkey.create(options);
+    await post('/api/staff/passkeys/verify', { challengeId, response });
+  } catch (e) {
+    $('passkey-error').textContent = '追加できませんでした。この端末がすでに登録済みか、確認が完了しませんでした。';
+    $('passkey-error').hidden = false;
+  }
+  $('passkey-add').disabled = false;
+  await loadPasskeys();
 };
 
 // ---------- 初期化 ----------

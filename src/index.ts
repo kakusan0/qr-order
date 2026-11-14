@@ -5,6 +5,14 @@ import { createMiddleware } from 'hono/factory';
 import qrcode from 'qrcode-generator';
 import staffHtml from './staff.html';
 import loginHtml from './login.html';
+import setupHtml from './setup.html';
+import {
+  generateAuthenticationOptions,
+  generateRegistrationOptions,
+  verifyAuthenticationResponse,
+  verifyRegistrationResponse,
+} from '@simplewebauthn/server';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 
 type Env = {
   DB: D1Database;
@@ -12,8 +20,13 @@ type Env = {
   STRIPE_SECRET_KEY: string;
   STRIPE_PUBLISHABLE_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
-  /** オーナー（ユーザー名 owner）のパスワード */
-  STAFF_PASSWORD: string;
+  /** 最初の管理者になるメールアドレス。このアドレスは初回セットアップ時に自動で管理者として登録される */
+  OWNER_EMAIL?: string;
+  /** '1' の間だけ、OWNER_EMAIL のパスキーを確認コードで登録し直せる（端末紛失時の復旧用。済んだら削除する） */
+  OWNER_RECOVERY?: string;
+  /** メール送信（Resend）の API キーと差出人アドレス */
+  RESEND_API_KEY?: string;
+  MAIL_FROM?: string;
   /** 任意。両方を設定すると注文作成時に Turnstile の確認を必須にする */
   TURNSTILE_SITE_KEY?: string;
   TURNSTILE_SECRET_KEY?: string;
@@ -22,9 +35,10 @@ type Env = {
   /** テスト用。通常は未設定 */
   STRIPE_API_BASE?: string;
   TURNSTILE_VERIFY_URL?: string;
+  MAIL_API_BASE?: string;
 };
 
-type Session = { username: string; role: 'admin' | 'staff' };
+type Session = { id: string; username: string; role: 'admin' | 'staff' };
 
 type OrderRow = {
   id: string;
@@ -58,7 +72,6 @@ const MIN_AMOUNT_JPY = 50; // Stripe の JPY 最低決済額
 const MAX_PRICE_JPY = 1_000_000;
 const MAX_LINES = 50;
 const MAX_QTY = 20;
-const OWNER = 'owner';
 const SESSION_COOKIE = 'staff_session';
 const SESSION_HOURS = 12;
 const PENDING_TTL_HOURS = 24;
@@ -91,16 +104,6 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
 
 async function sha256(s: string): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s)));
-}
-
-async function hashPassword(password: string, saltHex: string): Promise<string> {
-  const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', hash: 'SHA-256', salt: fromHex(saltHex), iterations: 100_000 },
-    key,
-    256,
-  );
-  return hex(bits);
 }
 
 const clientIp = (c: C) => c.req.header('CF-Connecting-IP') ?? 'unknown';
@@ -411,59 +414,246 @@ app.post('/api/stripe/webhook', async (c) => {
   return c.json({ received: true });
 });
 
-// ---------- スタッフのログイン ----------
+// ---------- スタッフのログイン（パスキーのみ。初回はメールの確認コード） ----------
+
+type StaffRow = { id: string; email: string; role: Session['role']; active: number; setup_allowed: number };
+
+const CODE_MINUTES = 10;
+const CODE_MAX_ATTEMPTS = 5;
+const CHALLENGE_MINUTES = 5;
+
+const parseEmail = (v: unknown): string => {
+  const email = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+};
+const ownerEmail = (env: Env) => parseEmail(env.OWNER_EMAIL);
+const rp = (c: C) => {
+  const u = new URL(c.req.url);
+  return { rpID: u.hostname, origin: u.origin };
+};
+const codeHash = async (email: string, code: string) => hex(await sha256(`${email}:${code}`));
 
 async function readSession(c: C): Promise<Session | null> {
   const token = getCookie(c, SESSION_COOKIE);
   if (!token) return null;
   const row = await c.env.DB.prepare(
-    `SELECT s.username, s.role, s.expires_at, st.active, st.role AS staff_role
-     FROM sessions s LEFT JOIN staff st ON st.username = s.username WHERE s.token_hash = ?`,
+    `SELECT s.expires_at, st.id, st.email, st.role, st.active
+     FROM sessions s JOIN staff st ON st.email = s.username WHERE s.token_hash = ?`,
   )
     .bind(hex(await sha256(token)))
-    .first<{ username: string; role: string; expires_at: string; active: number | null; staff_role: string | null }>();
-  if (!row || row.expires_at < nowIso()) return null;
-  if (row.username === OWNER) return { username: OWNER, role: 'admin' };
-  if (row.active !== 1) return null; // 無効化・削除されたアカウントは即時に使えなくなる
-  return { username: row.username, role: row.staff_role === 'admin' ? 'admin' : 'staff' };
+    .first<{ expires_at: string; id: string; email: string; role: Session['role']; active: number }>();
+  // 無効化・削除されたアカウントは即時に使えなくなる
+  if (!row || row.expires_at < nowIso() || row.active !== 1) return null;
+  return { id: row.id, username: row.email, role: row.role === 'admin' ? 'admin' : 'staff' };
 }
 
-app.post('/api/staff/login', async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { username?: unknown; password?: unknown } | null;
-  const username = typeof body?.username === 'string' ? body.username.trim().toLowerCase() : '';
-  const password = typeof body?.password === 'string' ? body.password : '';
-  if (!username || !password || username.length > 64 || password.length > 256) return c.json({ error: 'invalid_credentials' }, 401);
-
-  // 総当たり対策：接続元ごと・ユーザー名ごとに 15 分あたりの試行回数を制限する
-  const okIp = await rateLimit(c.env, 'login-ip', clientIp(c), 20, 900);
-  const okUser = await rateLimit(c.env, 'login-user', username, 8, 900);
-  if (!okIp || !okUser) return c.json({ error: 'too_many_requests' }, 429);
-
-  let role: Session['role'] | null = null;
-  if (username === OWNER) {
-    if (c.env.STAFF_PASSWORD && timingSafeEqual(await sha256(password), await sha256(c.env.STAFF_PASSWORD))) role = 'admin';
-  } else {
-    const row = await c.env.DB.prepare(`SELECT password_hash, salt, role FROM staff WHERE username = ? AND active = 1`)
-      .bind(username)
-      .first<{ password_hash: string; salt: string; role: Session['role'] }>();
-    // アカウントの有無で応答時間が変わらないよう、無くてもハッシュ計算は行う
-    const hash = await hashPassword(password, row?.salt ?? '00000000000000000000000000000000');
-    if (row && timingSafeEqual(enc.encode(hash), enc.encode(row.password_hash))) role = row.role;
-  }
-  if (!role) return c.json({ error: 'invalid_credentials' }, 401);
-
+async function startSession(c: C, staff: { email: string; role: string }) {
   const token = randomHex(32);
   await c.env.DB.prepare(`INSERT INTO sessions (token_hash, username, role, expires_at) VALUES (?, ?, ?, ?)`)
-    .bind(hex(await sha256(token)), username, role, new Date(Date.now() + SESSION_HOURS * 3600_000).toISOString())
+    .bind(hex(await sha256(token)), staff.email, staff.role, new Date(Date.now() + SESSION_HOURS * 3600_000).toISOString())
     .run();
-  setCookie(c, SESSION_COOKIE, token, {
-    path: '/',
-    httpOnly: true,
-    secure: true,
-    sameSite: 'Strict',
-    maxAge: SESSION_HOURS * 3600,
+  setCookie(c, SESSION_COOKIE, token, { path: '/', httpOnly: true, secure: true, sameSite: 'Strict', maxAge: SESSION_HOURS * 3600 });
+}
+
+async function saveChallenge(env: Env, challenge: string, kind: string, staffId: string | null): Promise<string> {
+  const id = randomHex(16);
+  await env.DB.prepare(`INSERT INTO webauthn_challenges (id, challenge, kind, staff_id, expires_at) VALUES (?, ?, ?, ?, ?)`)
+    .bind(id, challenge, kind, staffId, new Date(Date.now() + CHALLENGE_MINUTES * 60_000).toISOString())
+    .run();
+  return id;
+}
+
+/** 一時データを取り出して消す（1 回限り） */
+async function takeChallenge(env: Env, id: unknown, kind: string) {
+  if (typeof id !== 'string') return null;
+  const row = await env.DB.prepare(`DELETE FROM webauthn_challenges WHERE id = ? AND kind = ? RETURNING challenge, staff_id, expires_at`)
+    .bind(id, kind)
+    .first<{ challenge: string; staff_id: string | null; expires_at: string }>();
+  return row && row.expires_at >= nowIso() ? row : null;
+}
+
+async function sendMail(env: Env, to: string, subject: string, text: string): Promise<boolean> {
+  if (!env.RESEND_API_KEY || !env.MAIL_FROM) {
+    console.error('mail is not configured (RESEND_API_KEY / MAIL_FROM)');
+    return false;
+  }
+  try {
+    const res = await fetch(`${env.MAIL_API_BASE || 'https://api.resend.com'}/emails`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: env.MAIL_FROM, to: [to], subject, text }),
+    });
+    if (!res.ok) console.error('mail failed', res.status, (await res.text()).slice(0, 300));
+    return res.ok;
+  } catch (e) {
+    console.error(e);
+    return false;
+  }
+}
+
+function deviceLabel(c: C): string {
+  const ua = c.req.header('User-Agent') ?? '';
+  const device = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'Mac' : '端末';
+  return `${device}（${jstDate()} 登録）`;
+}
+
+async function registrationOptions(c: C, staff: { id: string; email: string }, kind: string) {
+  const { results: existing } = await c.env.DB.prepare(`SELECT id FROM passkeys WHERE staff_id = ?`).bind(staff.id).all<{ id: string }>();
+  const options = await generateRegistrationOptions({
+    rpName: '店舗管理',
+    rpID: rp(c).rpID,
+    userName: staff.email,
+    userID: new Uint8Array(enc.encode(staff.id)) as Uint8Array<ArrayBuffer>,
+    attestationType: 'none',
+    excludeCredentials: existing.map((p) => ({ id: p.id })),
+    // 端末に保存され、生体認証や画面ロックでの本人確認を必須にする
+    authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
   });
-  return c.json({ username, role });
+  return { options, challengeId: await saveChallenge(c.env, options.challenge, kind, staff.id) };
+}
+
+/** 登録結果を検証してパスキーを保存する */
+async function storePasskey(c: C, staffId: string, expectedChallenge: string, response: unknown): Promise<boolean> {
+  let result;
+  try {
+    result = await verifyRegistrationResponse({
+      response: response as RegistrationResponseJSON,
+      expectedChallenge,
+      expectedOrigin: rp(c).origin,
+      expectedRPID: rp(c).rpID,
+      requireUserVerification: true,
+    });
+  } catch (e) {
+    console.error(e);
+    return false;
+  }
+  if (!result.verified) return false;
+  const cred = result.registrationInfo.credential;
+  await c.env.DB.prepare(
+    `INSERT INTO passkeys (id, staff_id, public_key, counter, transports, label, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(cred.id, staffId, hex(cred.publicKey), cred.counter, JSON.stringify(cred.transports ?? []), deviceLabel(c), nowIso())
+    .run();
+  return true;
+}
+
+// 手順 1：メールアドレスに確認コードを送る
+app.post('/api/staff/setup/request', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { email?: unknown } | null;
+  const email = parseEmail(body?.email);
+  if (!email) return c.json({ error: 'bad_request' }, 400);
+  const okIp = await rateLimit(c.env, 'setup-ip', clientIp(c), 10, 900);
+  const okEmail = await rateLimit(c.env, 'setup-email', email, 3, 900);
+  if (!okIp || !okEmail) return c.json({ error: 'too_many_requests' }, 429);
+
+  let staff = await c.env.DB.prepare(`SELECT * FROM staff WHERE email = ?`).bind(email).first<StaffRow>();
+  const isOwner = email === ownerEmail(c.env);
+  if (!staff && isOwner) {
+    // 最初の管理者（OWNER_EMAIL）は初回セットアップ時に自動で登録する
+    staff = { id: crypto.randomUUID(), email, role: 'admin', active: 1, setup_allowed: 1 };
+    await c.env.DB.prepare(`INSERT INTO staff (id, email, role, created_at) VALUES (?, ?, 'admin', ?)`).bind(staff.id, email, nowIso()).run();
+  }
+  const eligible = !!staff && staff.active === 1 && (staff.setup_allowed === 1 || (isOwner && c.env.OWNER_RECOVERY === '1'));
+  if (eligible) {
+    const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, '0');
+    await c.env.DB.prepare(
+      `INSERT INTO email_codes (email, code_hash, attempts, expires_at) VALUES (?1, ?2, 0, ?3)
+       ON CONFLICT(email) DO UPDATE SET code_hash = ?2, attempts = 0, expires_at = ?3`,
+    )
+      .bind(email, await codeHash(email, code), new Date(Date.now() + CODE_MINUTES * 60_000).toISOString())
+      .run();
+    const sent = await sendMail(
+      c.env,
+      email,
+      '【店舗管理】確認コード',
+      `店舗管理画面のセットアップ用の確認コードです。\n\n確認コード: ${code}\n\n有効期限は ${CODE_MINUTES} 分です。このコードは誰にも教えないでください。\n心当たりがない場合は、このメールを破棄してください。`,
+    );
+    if (!sent) return c.json({ error: 'mail_failed' }, 502);
+  }
+  // 登録の有無を外から判別できないよう、対象外のアドレスでも同じ応答を返す
+  return c.json({ ok: true });
+});
+
+// 手順 2：確認コードを照合し、パスキー登録に進む
+app.post('/api/staff/setup/verify', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { email?: unknown; code?: unknown } | null;
+  const email = parseEmail(body?.email);
+  const code = typeof body?.code === 'string' ? body.code.trim() : '';
+  if (!email || !/^\d{6}$/.test(code)) return c.json({ error: 'invalid_code' }, 401);
+  if (!(await rateLimit(c.env, 'setup-verify-ip', clientIp(c), 20, 900))) return c.json({ error: 'too_many_requests' }, 429);
+
+  const row = await c.env.DB.prepare(`SELECT code_hash, attempts, expires_at FROM email_codes WHERE email = ?`)
+    .bind(email)
+    .first<{ code_hash: string; attempts: number; expires_at: string }>();
+  if (!row || row.expires_at < nowIso() || row.attempts >= CODE_MAX_ATTEMPTS) {
+    await c.env.DB.prepare(`DELETE FROM email_codes WHERE email = ?`).bind(email).run();
+    return c.json({ error: 'invalid_code' }, 401);
+  }
+  if (!timingSafeEqual(enc.encode(await codeHash(email, code)), enc.encode(row.code_hash))) {
+    await c.env.DB.prepare(`UPDATE email_codes SET attempts = attempts + 1 WHERE email = ?`).bind(email).run();
+    return c.json({ error: 'invalid_code' }, 401);
+  }
+  await c.env.DB.prepare(`DELETE FROM email_codes WHERE email = ?`).bind(email).run(); // コードは 1 回限り
+  const staff = await c.env.DB.prepare(`SELECT * FROM staff WHERE email = ? AND active = 1`).bind(email).first<StaffRow>();
+  if (!staff) return c.json({ error: 'invalid_code' }, 401);
+  return c.json(await registrationOptions(c, staff, 'setup'));
+});
+
+// 手順 3：パスキーを登録してログインする
+app.post('/api/staff/setup/finish', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { challengeId?: unknown; response?: unknown } | null;
+  const ch = await takeChallenge(c.env, body?.challengeId, 'setup');
+  const staff = ch?.staff_id
+    ? await c.env.DB.prepare(`SELECT * FROM staff WHERE id = ? AND active = 1`).bind(ch.staff_id).first<StaffRow>()
+    : null;
+  if (!ch || !staff || !(await storePasskey(c, staff.id, ch.challenge, body?.response))) {
+    return c.json({ error: 'registration_failed' }, 400);
+  }
+  await c.env.DB.prepare(`UPDATE staff SET setup_allowed = 0 WHERE id = ?`).bind(staff.id).run(); // 以後はパスキーのみ
+  await startSession(c, staff);
+  return c.json({ ok: true });
+});
+
+// ログイン：パスキーのみ
+app.post('/api/staff/login/options', async (c) => {
+  if (!(await rateLimit(c.env, 'login-ip', clientIp(c), 30, 900))) return c.json({ error: 'too_many_requests' }, 429);
+  const options = await generateAuthenticationOptions({ rpID: rp(c).rpID, userVerification: 'required' });
+  return c.json({ options, challengeId: await saveChallenge(c.env, options.challenge, 'login', null) });
+});
+
+app.post('/api/staff/login/verify', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { challengeId?: unknown; response?: AuthenticationResponseJSON } | null;
+  const ch = await takeChallenge(c.env, body?.challengeId, 'login');
+  const credId = typeof body?.response?.id === 'string' ? body.response.id : '';
+  const key = credId
+    ? await c.env.DB.prepare(
+        `SELECT p.id, p.public_key, p.counter, p.transports, st.email, st.role
+         FROM passkeys p JOIN staff st ON st.id = p.staff_id WHERE p.id = ? AND st.active = 1`,
+      )
+        .bind(credId)
+        .first<{ id: string; public_key: string; counter: number; transports: string | null; email: string; role: string }>()
+    : null;
+  if (!ch || !key || !body?.response) return c.json({ error: 'login_failed' }, 401);
+  let result;
+  try {
+    result = await verifyAuthenticationResponse({
+      response: body.response,
+      expectedChallenge: ch.challenge,
+      expectedOrigin: rp(c).origin,
+      expectedRPID: rp(c).rpID,
+      credential: { id: key.id, publicKey: fromHex(key.public_key) as Uint8Array<ArrayBuffer>, counter: key.counter },
+      requireUserVerification: true,
+    });
+  } catch (e) {
+    console.error(e);
+    return c.json({ error: 'login_failed' }, 401);
+  }
+  if (!result.verified) return c.json({ error: 'login_failed' }, 401);
+  await c.env.DB.prepare(`UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?`)
+    .bind(result.authenticationInfo.newCounter, nowIso(), key.id)
+    .run();
+  await startSession(c, key);
+  return c.json({ ok: true });
 });
 
 app.post('/api/staff/logout', async (c) => {
@@ -473,6 +663,7 @@ app.post('/api/staff/logout', async (c) => {
   return c.json({ ok: true });
 });
 
+app.get('/staff/setup', (c) => c.html(setupHtml, 200, { 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' }));
 app.get('/staff/login', (c) => c.html(loginHtml, 200, { 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' }));
 
 // 画面：未ログインならログイン画面へ
@@ -745,66 +936,125 @@ app.post('/api/staff/products/:id/availability', async (c) => {
   return c.json({ ok: true });
 });
 
+// ---------- スタッフ：自分のパスキー ----------
+
+app.get('/api/staff/passkeys', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, label, created_at AS createdAt, last_used_at AS lastUsedAt FROM passkeys WHERE staff_id = ? ORDER BY created_at`,
+  )
+    .bind(c.get('session').id)
+    .all();
+  return c.json({ passkeys: results });
+});
+
+// 2 台目以降の端末を追加する（ログイン中の本人のみ）
+app.post('/api/staff/passkeys/options', async (c) => {
+  const s = c.get('session');
+  return c.json(await registrationOptions(c, { id: s.id, email: s.username }, 'add'));
+});
+
+app.post('/api/staff/passkeys/verify', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { challengeId?: unknown; response?: unknown } | null;
+  const ch = await takeChallenge(c.env, body?.challengeId, 'add');
+  if (!ch || ch.staff_id !== c.get('session').id || !(await storePasskey(c, ch.staff_id, ch.challenge, body?.response))) {
+    return c.json({ error: 'registration_failed' }, 400);
+  }
+  return c.json({ ok: true });
+});
+
+app.delete('/api/staff/passkeys/:id', async (c) => {
+  // 最後の 1 つは消せない（ログインできなくなるため）
+  const res = await c.env.DB.prepare(
+    `DELETE FROM passkeys WHERE id = ?1 AND staff_id = ?2 AND (SELECT count(*) FROM passkeys WHERE staff_id = ?2) > 1`,
+  )
+    .bind(c.req.param('id'), c.get('session').id)
+    .run();
+  if (res.meta.changes !== 1) return c.json({ error: 'cannot_delete_last_passkey' }, 409);
+  return c.json({ ok: true });
+});
+
 // ---------- スタッフ：アカウント管理（管理者のみ） ----------
 
-const validUsername = (s: unknown): s is string => typeof s === 'string' && /^[a-z0-9][a-z0-9._-]{2,31}$/.test(s) && s !== OWNER;
-const validPassword = (s: unknown): s is string => typeof s === 'string' && s.length >= 10 && s.length <= 256;
+/** 有効な管理者がほかにいるか（最後の管理者を止めたり消したりしないため） */
+async function hasOtherAdmin(env: Env, exceptId: string): Promise<boolean> {
+  const row = await env.DB.prepare(`SELECT count(*) AS n FROM staff WHERE role = 'admin' AND active = 1 AND id != ?`)
+    .bind(exceptId)
+    .first<{ n: number }>();
+  return (row?.n ?? 0) > 0;
+}
 
 app.get('/api/staff/accounts', adminOnly, async (c) => {
-  const { results } = await c.env.DB.prepare(`SELECT id, username, role, active, created_at FROM staff ORDER BY created_at`).all<{
-    id: string;
-    username: string;
-    role: string;
-    active: number;
-    created_at: string;
-  }>();
-  return c.json({ accounts: results.map((a) => ({ ...a, active: a.active === 1, createdAt: a.created_at })) });
+  const { results } = await c.env.DB.prepare(
+    `SELECT st.id, st.email, st.role, st.active, st.setup_allowed, st.created_at,
+            (SELECT count(*) FROM passkeys p WHERE p.staff_id = st.id) AS passkeys
+     FROM staff st ORDER BY st.created_at`,
+  ).all<{ id: string; email: string; role: string; active: number; setup_allowed: number; created_at: string; passkeys: number }>();
+  return c.json({
+    accounts: results.map((a) => ({
+      id: a.id,
+      email: a.email,
+      role: a.role,
+      active: a.active === 1,
+      setupAllowed: a.setup_allowed === 1,
+      passkeys: a.passkeys,
+      self: a.id === c.get('session').id,
+    })),
+  });
 });
 
 app.post('/api/staff/accounts', adminOnly, async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { username?: unknown; password?: unknown; role?: unknown } | null;
-  const username = typeof body?.username === 'string' ? body.username.trim().toLowerCase() : '';
-  if (!validUsername(username) || !validPassword(body?.password) || (body?.role !== 'admin' && body?.role !== 'staff')) {
-    return c.json({ error: 'bad_request' }, 400);
-  }
-  const exists = await c.env.DB.prepare(`SELECT 1 FROM staff WHERE username = ?`).bind(username).first();
-  if (exists) return c.json({ error: 'username_taken' }, 409);
-  const salt = randomHex(16);
-  await c.env.DB.prepare(`INSERT INTO staff (id, username, password_hash, salt, role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(crypto.randomUUID(), username, await hashPassword(body.password, salt), salt, body.role, nowIso())
+  const body = (await c.req.json().catch(() => null)) as { email?: unknown; role?: unknown } | null;
+  const email = parseEmail(body?.email);
+  if (!email || (body?.role !== 'admin' && body?.role !== 'staff')) return c.json({ error: 'bad_request' }, 400);
+  const exists = await c.env.DB.prepare(`SELECT 1 FROM staff WHERE email = ?`).bind(email).first();
+  if (exists) return c.json({ error: 'email_taken' }, 409);
+  await c.env.DB.prepare(`INSERT INTO staff (id, email, role, created_at) VALUES (?, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), email, body.role, nowIso())
     .run();
-  return c.json({ ok: true }, 201);
+  // 案内メール。届かなくてもアカウントは作成済みなので、セットアップ画面の URL を口頭などで伝えればよい
+  const url = `${new URL(c.req.url).origin}/staff/setup`;
+  const invited = await sendMail(
+    c.env,
+    email,
+    '【店舗管理】スタッフとして登録されました',
+    `店舗管理画面のスタッフとして登録されました。\n\n次のページを開き、このメールアドレスを入力してセットアップしてください。\n${url}\n\n確認コードがメールで届いたあと、端末にパスキー（指紋・顔・画面ロック）を登録します。以後はパスキーだけでログインできます。`,
+  );
+  return c.json({ ok: true, invited }, 201);
 });
 
 app.post('/api/staff/accounts/:id/active', adminOnly, async (c) => {
   const body = (await c.req.json().catch(() => null)) as { active?: unknown } | null;
   if (typeof body?.active !== 'boolean') return c.json({ error: 'bad_request' }, 400);
-  const row = await c.env.DB.prepare(`UPDATE staff SET active = ? WHERE id = ? RETURNING username`)
+  if (!body.active && !(await hasOtherAdmin(c.env, c.req.param('id')))) return c.json({ error: 'last_admin' }, 409);
+  const row = await c.env.DB.prepare(`UPDATE staff SET active = ? WHERE id = ? RETURNING email`)
     .bind(body.active ? 1 : 0, c.req.param('id'))
-    .first<{ username: string }>();
+    .first<{ email: string }>();
   if (!row) return c.json({ error: 'account_not_found' }, 404);
-  if (!body.active) await c.env.DB.prepare(`DELETE FROM sessions WHERE username = ?`).bind(row.username).run();
+  if (!body.active) await c.env.DB.prepare(`DELETE FROM sessions WHERE username = ?`).bind(row.email).run();
   return c.json({ ok: true });
 });
 
-app.post('/api/staff/accounts/:id/password', adminOnly, async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { password?: unknown } | null;
-  if (!validPassword(body?.password)) return c.json({ error: 'bad_request' }, 400);
-  const salt = randomHex(16);
-  const row = await c.env.DB.prepare(`UPDATE staff SET password_hash = ?, salt = ? WHERE id = ? RETURNING username`)
-    .bind(await hashPassword(body.password, salt), salt, c.req.param('id'))
-    .first<{ username: string }>();
+// 端末の紛失・機種変更時：登録済みのパスキーを無効にし、メールの確認コードでの再セットアップを許可する
+app.post('/api/staff/accounts/:id/reset', adminOnly, async (c) => {
+  const row = await c.env.DB.prepare(`UPDATE staff SET setup_allowed = 1 WHERE id = ? RETURNING email`)
+    .bind(c.req.param('id'))
+    .first<{ email: string }>();
   if (!row) return c.json({ error: 'account_not_found' }, 404);
-  await c.env.DB.prepare(`DELETE FROM sessions WHERE username = ?`).bind(row.username).run(); // 変更前のログインを無効にする
+  await c.env.DB.batch([
+    c.env.DB.prepare(`DELETE FROM passkeys WHERE staff_id = ?`).bind(c.req.param('id')),
+    c.env.DB.prepare(`DELETE FROM sessions WHERE username = ?`).bind(row.email),
+  ]);
   return c.json({ ok: true });
 });
 
 app.delete('/api/staff/accounts/:id', adminOnly, async (c) => {
-  const row = await c.env.DB.prepare(`DELETE FROM staff WHERE id = ? RETURNING username`)
-    .bind(c.req.param('id'))
-    .first<{ username: string }>();
+  if (!(await hasOtherAdmin(c.env, c.req.param('id')))) return c.json({ error: 'last_admin' }, 409);
+  const row = await c.env.DB.prepare(`DELETE FROM staff WHERE id = ? RETURNING email`).bind(c.req.param('id')).first<{ email: string }>();
   if (!row) return c.json({ error: 'account_not_found' }, 404);
-  await c.env.DB.prepare(`DELETE FROM sessions WHERE username = ?`).bind(row.username).run();
+  await c.env.DB.batch([
+    c.env.DB.prepare(`DELETE FROM passkeys WHERE staff_id = ?`).bind(c.req.param('id')),
+    c.env.DB.prepare(`DELETE FROM sessions WHERE username = ?`).bind(row.email),
+  ]);
   return c.json({ ok: true });
 });
 
@@ -857,6 +1107,8 @@ async function cleanup(env: Env): Promise<void> {
     env.DB.prepare(`DELETE FROM orders WHERE created_at < ?`).bind(old),
     // 3) 期限切れのログインと回数制限の記録
     env.DB.prepare(`DELETE FROM sessions WHERE expires_at < ?`).bind(nowIso()),
+    env.DB.prepare(`DELETE FROM webauthn_challenges WHERE expires_at < ?`).bind(nowIso()),
+    env.DB.prepare(`DELETE FROM email_codes WHERE expires_at < ?`).bind(nowIso()),
     env.DB.prepare(`DELETE FROM rate_limits WHERE expires_at < ?`).bind(Math.floor(Date.now() / 1000)),
   ]);
 }

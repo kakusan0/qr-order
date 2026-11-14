@@ -28,7 +28,9 @@ npm run db:seed:remote                 # サンプル。seed.sql を実際の店
 npx wrangler secret put STRIPE_SECRET_KEY
 npx wrangler secret put STRIPE_PUBLISHABLE_KEY
 npx wrangler secret put STRIPE_WEBHOOK_SECRET
-npx wrangler secret put STAFF_PASSWORD
+npx wrangler secret put RESEND_API_KEY
+npx wrangler secret put OWNER_EMAIL
+npx wrangler secret put MAIL_FROM
 npm run deploy
 ```
 
@@ -42,7 +44,8 @@ Stripe 側の設定:
 
 ## 運用に関する仕組み
 
-- **ログイン**: オーナーはユーザー名 `owner` とシークレット `STAFF_PASSWORD` でログインし、「スタッフ」タブで個人別アカウント（管理者 / スタッフ）を作成する。パスワードはハッシュのみ保存。ログイン試行は 15 分あたりの回数を制限。
+- **ログイン**: パスキーのみ（パスワードなし）。初回は `/staff/setup` でメールアドレスを入力し、メールで届く 6 桁の確認コード（10 分有効・5 回まで）で本人確認をしてからパスキーを登録する。最初の管理者は変数 `OWNER_EMAIL` のアドレス。以後のスタッフは管理者が「スタッフ」タブでメールアドレスと権限を登録する。端末紛失時は管理者が「再セットアップ」を押す。唯一の管理者が端末を失った場合は、Cloudflare で変数 `OWNER_RECOVERY=1` を一時的に設定すると `OWNER_EMAIL` で再セットアップできる（済んだら削除）。
+- **メール送信**: Resend を使用。シークレット `RESEND_API_KEY` と、差出人アドレスの変数 `MAIL_FROM` が必要。
 - **注文作成の制限**: 同じ接続元から 5 分間に 30 回まで。シークレット `TURNSTILE_SITE_KEY` と `TURNSTILE_SECRET_KEY`（Cloudflare ダッシュボードの Turnstile で作成）を両方設定すると、注文時に Turnstile の確認を必須にする。
 - **年齢確認商品**: 商品に「年齢確認が必要」を付けると、お客様は 20 歳以上の申告が必要になり、スタッフが「年齢を確認した」を押すまで受け渡し完了にできない。
 - **返金**: 管理者のみ。金額を指定して一部返金でき、全額を返金し終えると「返金済」になる。
