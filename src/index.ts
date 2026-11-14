@@ -36,6 +36,10 @@ type Env = {
   STRIPE_API_BASE?: string;
   TURNSTILE_VERIFY_URL?: string;
   MAIL_API_BASE?: string;
+  /** 任意。Yahoo!ショッピング商品検索 API の Client ID。設定するとバーコードから商品名を引ける範囲が広がる */
+  YAHOO_CLIENT_ID?: string;
+  YAHOO_API_BASE?: string;
+  OFF_API_BASE?: string;
 };
 
 type Session = { id: string; username: string; role: 'admin' | 'staff' };
@@ -1042,6 +1046,60 @@ app.delete('/api/staff/products/:id', adminOnly, async (c) => {
   const res = await c.env.DB.prepare(`DELETE FROM products WHERE id = ?`).bind(c.req.param('id')).run();
   if (res.meta.changes !== 1) return c.json({ error: 'product_not_found' }, 404);
   return c.json({ ok: true });
+});
+
+// バーコードから商品情報を調べる（外部の商品データベースに問い合わせる。送るのはバーコードの数字だけ）
+type ProductInfo = { name: string; referencePrice: number | null; source: string };
+
+async function fetchJson(url: string, headers: Record<string, string> = {}): Promise<unknown> {
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
+  if (!res.ok) throw new Error(`lookup ${new URL(url).hostname} ${res.status}`);
+  return res.json();
+}
+
+const cleanName = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, 60) : '');
+
+/** Open Food Facts：食品・飲料の公開データベース（登録不要） */
+async function lookupOpenFoodFacts(env: Env, code: string): Promise<ProductInfo | null> {
+  const base = env.OFF_API_BASE || 'https://world.openfoodfacts.org';
+  const json = (await fetchJson(`${base}/api/v2/product/${code}.json?fields=product_name,product_name_ja,brands,quantity`, {
+    'User-Agent': 'qr-order/1.0',
+  })) as { status?: number; product?: { product_name?: string; product_name_ja?: string; brands?: string; quantity?: string } };
+  if (json.status !== 1 || !json.product) return null;
+  const base_name = cleanName(json.product.product_name_ja) || cleanName(json.product.product_name);
+  if (!base_name) return null;
+  const quantity = cleanName(json.product.quantity);
+  const name = cleanName(quantity && !base_name.includes(quantity) ? `${base_name} ${quantity}` : base_name);
+  return { name, referencePrice: null, source: 'Open Food Facts' };
+}
+
+/** Yahoo!ショッピング：出品されている商品の名称と価格（Client ID が必要） */
+async function lookupYahoo(env: Env, code: string): Promise<ProductInfo | null> {
+  if (!env.YAHOO_CLIENT_ID) return null;
+  const base = env.YAHOO_API_BASE || 'https://shopping.yahooapis.jp';
+  const url = `${base}/ShoppingWebService/V3/itemSearch?appid=${encodeURIComponent(env.YAHOO_CLIENT_ID)}&jan_code=${code}&results=5&sort=-score`;
+  const json = (await fetchJson(url)) as { hits?: { name?: string; price?: number }[] };
+  const hit = (json.hits ?? []).find((h) => cleanName(h.name));
+  if (!hit) return null;
+  const prices = (json.hits ?? []).map((h) => h.price).filter((n): n is number => typeof n === 'number' && n > 0);
+  // 出品タイトルに付く宣伝文句（【送料無料】など）は商品名ではないので外す
+  const name = cleanName((hit.name ?? '').replace(/【[^】]*】|\[[^\]]*\]|送料無料|ポイント\d+倍/g, ' ')) || cleanName(hit.name);
+  return { name, referencePrice: prices.length ? Math.min(...prices) : null, source: 'Yahoo!ショッピング' };
+}
+
+app.get('/api/staff/barcode-lookup', adminOnly, async (c) => {
+  const code = c.req.query('code') ?? '';
+  if (!validBarcode(code)) return c.json({ error: 'bad_request' }, 400);
+  if (!(await rateLimit(c.env, 'lookup', c.get('session').id, 120, 3600))) return c.json({ error: 'too_many_requests' }, 429);
+  for (const lookup of [lookupOpenFoodFacts, lookupYahoo]) {
+    try {
+      const info = await lookup(c.env, code);
+      if (info) return c.json({ found: true, ...info });
+    } catch (e) {
+      console.error(e); // 片方が落ちていても、もう片方で探す
+    }
+  }
+  return c.json({ found: false });
 });
 
 // 有効・無効（品切れ対応）は一般スタッフも切り替えられる

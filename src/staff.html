@@ -378,6 +378,7 @@ function stopEdit() {
   $('form-title').textContent = '商品を登録';
   $('p-submit').textContent = '登録する';
   $('p-cancel').hidden = true;
+  lookupSeq++; // 調べている途中の結果は捨てる
   $('product-form').reset();
   $('product-error').hidden = true;
   $('barcode-note').hidden = true;
@@ -434,11 +435,43 @@ function onBarcode(code) {
     $('barcode-note').textContent = 'このバーコードは「' + existing.name + '」として登録済みです。内容を編集できます。';
   } else {
     $('p-barcode').value = code;
-    $('barcode-note').textContent = 'バーコード ' + code + ' を読み取りました。商品名と価格を入力してください。';
-    if (!$('p-name').value) $('p-name').focus();
+    $('barcode-note').textContent = 'バーコード ' + code + ' を読み取りました。';
+    lookupBarcode(code);
   }
   $('barcode-note').hidden = false;
 }
+
+// バーコードから商品名を調べて入力欄に入れる。入力済みの商品名は上書きしない
+let lookupSeq = 0;
+async function lookupBarcode(code) {
+  if (!isAdmin() || !window.validBarcode || !window.validBarcode(code)) return;
+  const seq = ++lookupSeq;
+  const note = (msg) => { if (seq === lookupSeq) { $('barcode-note').textContent = msg; $('barcode-note').hidden = false; } };
+  note('バーコード ' + code + ' の商品情報を調べています…');
+  let info = null;
+  try { info = await api('/api/staff/barcode-lookup?code=' + encodeURIComponent(code)); } catch {}
+  if (seq !== lookupSeq || $('p-barcode').value.trim() !== code) return; // 途中で別のバーコードに変わった
+  if (!info || !info.found) {
+    note('バーコード ' + code + ' の商品情報は見つかりませんでした。商品名と価格を入力してください。');
+    if (!$('p-name').value) $('p-name').focus();
+    return;
+  }
+  const filled = !$('p-name').value.trim();
+  if (filled) $('p-name').value = info.name;
+  const credit = info.source === 'Yahoo!ショッピング' ? ' Web Services by Yahoo! JAPAN' : '';
+  note(
+    (filled ? '商品名を自動で入力しました' : '候補: ' + info.name) + '（出典: ' + info.source + '）。' +
+    (info.referencePrice ? 'ネット上の参考価格は ' + yen(info.referencePrice) + ' です。' : '') +
+    '名称・価格・税率は必ず確認して、販売する内容に合わせてください。' + credit
+  );
+  if (!$('p-price').value) $('p-price').focus();
+}
+// 数字を手で入力した場合も調べる
+$('p-barcode').addEventListener('change', () => {
+  const code = $('p-barcode').value.trim();
+  if (productList.some((p) => p.barcode === code && p.id !== editingId)) return;
+  lookupBarcode(code);
+});
 
 function scanTick() {
   if (!scanStream) return;
