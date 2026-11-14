@@ -51,6 +51,12 @@ app.onError((err, c) => {
 
 // ---------- Stripe ----------
 
+class StripeError extends Error {
+  constructor(public status: number, public type: string, public code: string) {
+    super(`stripe ${status} ${type} ${code}`.trim());
+  }
+}
+
 async function stripe<T>(
   env: Env,
   method: 'GET' | 'POST',
@@ -67,8 +73,11 @@ async function stripe<T>(
   }
   const base = env.STRIPE_API_BASE || 'https://api.stripe.com';
   const res = await fetch(`${base}/v1${path}`, { method, headers, body });
-  const json = (await res.json()) as T & { error?: { message?: string } };
-  if (!res.ok) throw new Error(`Stripe ${path} ${res.status}: ${json.error?.message ?? ''}`);
+  const json = (await res.json().catch(() => ({}))) as T & { error?: { message?: string; type?: string; code?: string } };
+  if (!res.ok) {
+    console.error(`Stripe ${path} ${res.status}: ${json.error?.message ?? ''}`);
+    throw new StripeError(res.status, json.error?.type ?? '', json.error?.code ?? '');
+  }
   return json;
 }
 
@@ -208,7 +217,9 @@ app.post('/api/orders', async (c) => {
   ]);
 
   // Apple Pay / Google Pay は Stripe 上では card 扱い。カード情報は当システムを通過しない
-  const pi = await stripe<{ id: string; client_secret: string }>(
+  let pi: { id: string; client_secret: string };
+  try {
+    pi = await stripe<{ id: string; client_secret: string }>(
     c.env,
     'POST',
     '/payment_intents',
@@ -222,6 +233,13 @@ app.post('/api/orders', async (c) => {
     },
     `order-${orderId}`,
   );
+  } catch (e) {
+    // 支払いを開始できなかった理由を残す（注文は未払いのまま。請求は発生しない）
+    const reason = e instanceof StripeError ? e.message : 'stripe unreachable';
+    await c.env.DB.prepare(`UPDATE orders SET payment_error = ? WHERE id = ?`).bind(reason, orderId).run();
+    console.error(e);
+    return c.json({ error: 'payment_provider_error' }, 502);
+  }
   await c.env.DB.prepare(`UPDATE orders SET payment_intent_id = ? WHERE id = ?`).bind(pi.id, orderId).run();
 
   return c.json({ orderId, total, clientSecret: pi.client_secret }, 201);
