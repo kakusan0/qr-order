@@ -397,7 +397,7 @@
   // --- カメラで商品 QR を読み取る（映像は端末内だけで処理し、送信しない） ---
   const video = $('scan-video');
   const canvas = document.createElement('canvas');
-  let stream = null, raf = 0, lastText = '', lastSeen = 0;
+  let stream = null, raf = 0, lastText = '', lastSeen = 0, lastHit = 0, scanSession = 0;
 
   function stopScan() {
     cancelAnimationFrame(raf);
@@ -428,6 +428,21 @@
         }
         lastText = text;
         lastSeen = now;
+        lastHit = now;
+      } else if (window.readDigits && !window.ocrBusy() && Date.now() - lastHit > 1500) {
+        // 線が読めないときは、バーコードの下の数字を文字認識で読む。登録済みの商品の番号と一致したときだけ使う
+        const session = scanSession;
+        window.readDigits(canvas).then((digits) => {
+          if (!digits || session !== scanSession || !stream) return;
+          if (!data.products.some((x) => x.barcode === digits)) return;
+          const now = Date.now();
+          if (digits !== lastText || now - lastSeen > 2000) {
+            handleCode(digits).then(() => { $('scan-status').textContent = $('toast-text').textContent; });
+          }
+          lastText = digits;
+          lastSeen = now;
+          lastHit = now;
+        });
       }
     }
     raf = requestAnimationFrame(tick);
@@ -479,9 +494,11 @@
     }
     showSwitchIfUseful();
     lastText = '';
+    lastHit = Date.now();
+    scanSession++;
     $('scanner').hidden = false;
     $('scan-open').hidden = true;
-    $('scan-status').textContent = '商品の QR コードまたはバーコードを枠内に写してください。';
+    $('scan-status').textContent = '商品の QR コードまたはバーコードを枠内に写してください。線が読めないときは、下の数字を大きく写してください。';
     video.srcObject = stream;
     await video.play().catch(() => {});
     tick();
