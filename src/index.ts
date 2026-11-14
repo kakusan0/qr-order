@@ -38,6 +38,7 @@ type PaymentIntent = {
 };
 
 const MIN_AMOUNT_JPY = 50; // Stripe の JPY 最低決済額
+const MAX_PRICE_JPY = 1_000_000;
 const MAX_LINES = 50;
 const MAX_QTY = 20;
 
@@ -281,7 +282,7 @@ app.get('/api/orders/:id', async (c) => {
     paidAt: order.paid_at,
     handedOverAt: order.handed_over_at,
     refundedAt: order.refunded_at,
-    store: { name: store!.name, invoiceNumber: store!.invoice_number },
+    store: { id: order.store_id, name: store!.name, invoiceNumber: store!.invoice_number },
     items: items.map((i) => ({ name: i.name, unitPrice: i.unit_price, taxRate: i.tax_rate, qty: i.qty })),
     tax: taxSummary(items),
   });
@@ -347,6 +348,71 @@ app.get('/staff/qr.svg', async (c) => {
   qr.addData(`${new URL(c.req.url).origin}/s/${encodeURIComponent(storeId)}`);
   qr.make();
   return c.body(qr.createSvgTag({ cellSize: 8, margin: 32, scalable: true }), 200, { 'Content-Type': 'image/svg+xml' });
+});
+
+// 商品QR：読み取ると注文画面が開き、その商品がカートに入る
+app.get('/staff/product-qr.svg', async (c) => {
+  const product = await c.env.DB.prepare(`SELECT id, store_id FROM products WHERE id = ?`)
+    .bind(c.req.query('id') ?? '')
+    .first<{ id: string; store_id: string }>();
+  if (!product) return c.text('product not found', 404);
+  const qr = qrcode(0, 'M');
+  qr.addData(
+    `${new URL(c.req.url).origin}/s/${encodeURIComponent(product.store_id)}?add=${encodeURIComponent(product.id)}`,
+  );
+  qr.make();
+  return c.body(qr.createSvgTag({ cellSize: 8, margin: 32, scalable: true }), 200, { 'Content-Type': 'image/svg+xml' });
+});
+
+app.get('/api/staff/products', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, name, price, tax_rate AS taxRate, available FROM products WHERE store_id = ? ORDER BY sort, id`,
+  )
+    .bind(c.req.query('store') ?? '')
+    .all<{ id: string; name: string; price: number; taxRate: number; available: number }>();
+  c.header('Cache-Control', 'no-store');
+  return c.json({ products: results.map((p) => ({ ...p, available: p.available === 1 })) });
+});
+
+app.post('/api/staff/products', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as
+    | { storeId?: unknown; name?: unknown; price?: unknown; taxRate?: unknown }
+    | null;
+  const name = typeof body?.name === 'string' ? body.name.trim() : '';
+  const price = body?.price;
+  const taxRate = body?.taxRate;
+  if (
+    !body ||
+    typeof body.storeId !== 'string' ||
+    !name ||
+    name.length > 60 ||
+    !Number.isInteger(price) ||
+    (price as number) < MIN_AMOUNT_JPY || // 1点でも決済できる金額にする
+    (price as number) > MAX_PRICE_JPY ||
+    (taxRate !== 8 && taxRate !== 10)
+  ) {
+    return c.json({ error: 'bad_request' }, 400);
+  }
+  const store = await c.env.DB.prepare(`SELECT id FROM stores WHERE id = ?`).bind(body.storeId).first();
+  if (!store) return c.json({ error: 'store_not_found' }, 404);
+  const id = 'p-' + crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+  await c.env.DB.prepare(
+    `INSERT INTO products (id, store_id, name, price, tax_rate, available, sort)
+     VALUES (?1, ?2, ?3, ?4, ?5, 1, (SELECT COALESCE(MAX(sort), 0) + 1 FROM products WHERE store_id = ?2))`,
+  )
+    .bind(id, body.storeId, name, price, taxRate)
+    .run();
+  return c.json({ id }, 201);
+});
+
+app.post('/api/staff/products/:id/availability', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { available?: unknown } | null;
+  if (typeof body?.available !== 'boolean') return c.json({ error: 'bad_request' }, 400);
+  const res = await c.env.DB.prepare(`UPDATE products SET available = ? WHERE id = ?`)
+    .bind(body.available ? 1 : 0, c.req.param('id'))
+    .run();
+  if (res.meta.changes !== 1) return c.json({ error: 'product_not_found' }, 404);
+  return c.json({ ok: true });
 });
 
 app.get('/api/staff/stores', async (c) => {

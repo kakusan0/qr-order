@@ -6,6 +6,7 @@
 <title>ご注文</title>
 <link rel="stylesheet" href="/style.css">
 <script src="https://js.stripe.com/v3/" defer></script>
+<script src="/vendor/jsQR.js" defer></script>
 <script src="/store.js" defer></script>
 </head>
 <body>
@@ -14,9 +15,18 @@
   <p id="error" class="error" role="alert" hidden></p>
   <p id="last-order" hidden><a href="#">直近のご注文（受取番号）を表示する</a></p>
 
-  <h2>商品を選ぶ</h2>
+  <button id="scan-open" class="primary wide" hidden>商品の QR コードをスキャン</button>
+
+  <section id="scanner" class="card scanner" hidden>
+    <video id="scan-video" playsinline muted></video>
+    <p id="scan-status" class="note" aria-live="polite">商品の QR コードを枠内に写してください。</p>
+    <button id="scan-close" class="wide">スキャンを終了</button>
+  </section>
+
+  <h2>カート</h2>
   <p class="note">表示価格はすべて税込です。※印は軽減税率（8%）対象。</p>
-  <div id="products"></div>
+  <p id="notice" class="notice" role="status" hidden></p>
+  <div id="cart"></div>
 
   <section id="confirm" hidden>
     <h2>ご注文内容の確認</h2>

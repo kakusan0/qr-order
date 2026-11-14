@@ -17,6 +17,8 @@
 
   function render(o) {
     $('store-name').textContent = o.store.name;
+    // 支払いが済んだらカートを空にする
+    if (o.status !== 'pending') { try { localStorage.removeItem('cart:' + o.store.id); } catch { /* 無視 */ } }
     $('ticket').className = 'card ticket ' + o.status;
     const view = {
       pending: ['お支払いを確認しています…', 'まだ商品はお受け取りいただけません。このままお待ちください。'],
