@@ -10,52 +10,60 @@
 <script src="/vendor/zxing.min.js" defer></script>
 <script src="/barcode.js" defer></script>
 <style>
-  body { min-height: 100vh; }
-  .app-bar { position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+  .app-bar { flex-wrap: wrap; }
   .app-bar .who { display: flex; align-items: center; gap: 8px; font-size: .875rem; color: var(--muted); }
-  .app-bar .who button { min-height: 36px; padding: 4px 10px; }
+  .app-bar .who button { min-height: 36px; padding: 4px 12px; border-radius: 999px; }
   .app-bar .spacer { flex: 1; }
   .layout { display: block; }
-  .tabs { display: flex; gap: 4px; overflow-x: auto; padding: 8px 12px; background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 57px; z-index: 4; }
-  .tabs button { flex: none; border: 0; background: transparent; color: var(--muted); font-weight: 600; white-space: nowrap; }
-  .tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-text); }
-  .tabs .badge { margin-left: 6px; background: var(--warn); color: #fff; }
-  .content { max-width: none; margin: 0; padding: 16px 16px 64px; }
-  .grid { display: grid; gap: 12px; grid-template-columns: 1fr; }
+  /* メニュー：スマホでは横に並ぶピル型のタブ */
+  .tabs { display: flex; gap: 6px; overflow-x: auto; padding: 10px 12px; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { flex: none; border-radius: 999px; border-color: transparent; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--muted); font-weight: 700; white-space: nowrap; }
+  .tabs button[aria-selected="true"] { background: linear-gradient(135deg, var(--brand-1), var(--brand-2)); color: var(--on-brand); box-shadow: var(--shadow-brand); }
+  .tabs .badge { margin-left: 6px; background: #b8431f; color: #fff; }
+  .tabs button[aria-selected="true"] .badge { background: #fff; color: var(--brand-1); }
+  .content { max-width: none; margin: 0; padding: 8px 16px 64px; }
+  /* 一覧：大きさのそろったカードを並べる（ベントグリッド） */
+  .grid { display: grid; gap: 14px; grid-template-columns: 1fr; align-items: start; }
   .grid > .order, .grid > .card { margin: 0; }
   .form.narrow { max-width: 520px; }
-  .form .check { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 1rem; }
-  .form .check input { width: 22px; min-height: 22px; height: 22px; flex: none; }
-  .tag { display: inline-block; font-size: .75rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--warn); color: var(--warn); }
-  .tag.ok { border-color: var(--accent); color: var(--accent); }
+  .form .check { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 1rem; font-weight: 400; }
+  .form .check input { width: 22px; min-height: 22px; height: 22px; flex: none; padding: 0; accent-color: var(--brand-1); }
+  .tag { display: inline-block; font-size: .75rem; font-weight: 800; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--warn); color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+  .tag.ok { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
   .order .meta { font-size: .8rem; color: var(--muted); margin: 0 0 8px; }
   .order .actions { flex-wrap: wrap; }
+  .order .actions button { white-space: nowrap; }
   .account { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .account .info { flex: 1; min-width: 160px; }
-  dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text); padding: 20px; width: min(420px, calc(100% - 32px)); }
-  dialog::backdrop { background: rgba(0, 0, 0, .45); }
-  dialog h3 { margin: 0 0 12px; font-size: 1.05rem; }
+  dialog { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--card); color: var(--text); padding: 22px; width: min(440px, calc(100% - 32px)); box-shadow: var(--shadow-md); }
+  dialog::backdrop { background: rgba(10, 15, 12, .5); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+  dialog h3 { margin: 0 0 12px; font-size: 1.1rem; font-weight: 800; }
   .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .keypad button { min-height: 56px; font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; padding: 0; touch-action: manipulation; }
-  .keypad button:active { background: var(--accent); color: var(--accent-text); }
-  .keypad .wide { grid-column: 1 / -1; min-height: 44px; font-size: 1rem; font-weight: 600; color: var(--muted); }
-  input[data-keypad] { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
-  #scan-video { display: block; width: 100%; max-height: 50vh; border-radius: 8px; background: #000; object-fit: cover; }
-  .form .field { display: grid; gap: 4px; }
-  .form .field > label { font-size: .875rem; color: var(--muted); }
+  .keypad button { min-height: 56px; font-size: 1.35rem; font-weight: 800; font-variant-numeric: tabular-nums; padding: 0; border-radius: var(--r-md); box-shadow: var(--shadow-sm); }
+  .keypad button:active { background: var(--brand-1); color: var(--on-brand); }
+  .keypad .wide { grid-column: 1 / -1; min-height: 44px; font-size: 1rem; font-weight: 600; color: var(--muted); box-shadow: none; }
+  input[data-keypad] { font-size: 1.35rem; font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; }
+  #scan-video { display: block; width: 100%; max-height: 50vh; border-radius: var(--r-md); background: #000; object-fit: cover; }
+  .form .field { display: grid; gap: 6px; }
+  .form .field > label { font-size: .875rem; color: var(--muted); font-weight: 600; }
   .form .field .actions input { flex: 1; min-width: 0; }
   .form .field .actions button { flex: none; }
 
   /* PC・タブレット横：左にメニュー、右に内容を複数列で表示 */
   @media (min-width: 900px) {
-    .layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); align-items: start; }
-    .tabs { flex-direction: column; overflow: visible; border-bottom: 0; border-right: 1px solid var(--line); padding: 16px 12px; top: 57px; min-height: calc(100vh - 57px); }
-    .tabs button { text-align: left; width: 100%; }
-    .content { padding: 24px 32px 64px; max-width: 1280px; }
+    .app-bar { flex-wrap: nowrap; padding: 12px 24px; }
+    .layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); align-items: start; }
+    .tabs { flex-direction: column; overflow: visible; padding: 20px 14px; position: sticky; top: 69px; }
+    .tabs button { text-align: left; width: 100%; border-radius: var(--r-sm); background: transparent; padding: 10px 14px; }
+    .tabs button:hover:not([aria-selected="true"]) { background: color-mix(in srgb, var(--text) 6%, transparent); }
+    .content { padding: 20px 32px 64px; max-width: 1320px; }
     .grid { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
     .grid.products { grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); }
+    .grid > .order { transition: transform .2s var(--ease), box-shadow .2s var(--ease); }
+    .grid > .order:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
     .split { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 32px; align-items: start; }
-    .split > section:first-child { position: sticky; top: 81px; }
+    .split > section:first-child { position: sticky; top: 89px; }
     .split h2:first-child { margin-top: 0; }
     .content > section > h2:first-child { margin-top: 0; }
   }
