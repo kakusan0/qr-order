@@ -54,6 +54,15 @@
   .form .field .actions input { flex: 1; min-width: 0; }
   .form .field .actions button { flex: none; }
 
+  /* フリックで切り替えたとき、動かした向きから画面が入ってくる */
+  @media (prefers-reduced-motion: no-preference) {
+    [data-panel].from-right { animation: panel-from-right .28s var(--ease) both; }
+    [data-panel].from-left { animation: panel-from-left .28s var(--ease) both; }
+    @keyframes panel-from-right { from { opacity: 0; transform: translateX(32px); } to { opacity: 1; transform: none; } }
+    @keyframes panel-from-left { from { opacity: 0; transform: translateX(-32px); } to { opacity: 1; transform: none; } }
+  }
+  .content { touch-action: pan-y; min-height: 70vh; }
+
   /* PC・タブレット横：左にメニュー、右に内容を複数列で表示 */
   @media (min-width: 900px) {
     .app-bar { flex-wrap: nowrap; padding: 12px 24px; }
@@ -274,15 +283,56 @@ for (const input of document.querySelectorAll('input[data-keypad]')) {
 }
 
 // ---------- メニュー ----------
-function showTab(name) {
-  for (const b of document.querySelectorAll('.tabs [data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === name));
-  for (const p of document.querySelectorAll('[data-panel]')) p.hidden = p.dataset.panel !== name;
+function showTab(name, direction) {
+  for (const b of document.querySelectorAll('.tabs [data-tab]')) {
+    b.setAttribute('aria-selected', String(b.dataset.tab === name));
+    // 選んだタブが横スクロールの外にあれば、見える位置へ寄せる
+    if (b.dataset.tab === name && b.scrollIntoView) b.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  }
+  for (const p of document.querySelectorAll('[data-panel]')) {
+    p.hidden = p.dataset.panel !== name;
+    p.classList.remove('from-left', 'from-right');
+    if (!p.hidden && direction) p.classList.add(direction > 0 ? 'from-right' : 'from-left'); // フリックした向きに画面が入ってくる
+  }
   try { sessionStorage.setItem('staffTab', name); } catch {}
   if (name === 'products') loadProducts();
   if (name === 'accounts') loadAccounts();
   if (name === 'me') loadPasskeys();
 }
 for (const b of document.querySelectorAll('.tabs [data-tab]')) b.onclick = () => showTab(b.dataset.tab);
+
+// 左右のフリック（スワイプ）で、隣のメニューに切り替える
+(() => {
+  const area = document.querySelector('.content');
+  let x0 = 0, y0 = 0, t0 = 0, tracking = false;
+  const visibleTabs = () => [...document.querySelectorAll('.tabs [data-tab]')].filter((b) => !b.hidden).map((b) => b.dataset.tab);
+  const current = () => (document.querySelector('.tabs [data-tab][aria-selected="true"]') || {}).dataset?.tab;
+
+  area.addEventListener('touchstart', (e) => {
+    tracking = false;
+    if (e.touches.length !== 1 || document.querySelector('dialog[open]')) return;
+    // 入力欄やカメラ映像の上から始めた操作は、切り替えに使わない（文字の選択やカーソル移動と区別する）
+    if (e.target.closest('input, select, textarea, video, [data-noswipe]')) return;
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; t0 = Date.now(); tracking = true;
+  }, { passive: true });
+
+  area.addEventListener('touchend', (e) => {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - x0, dy = t.clientY - y0;
+    // 横に 60px 以上、縦の動きの 2 倍以上、0.6 秒以内の動きだけをフリックとみなす（縦スクロールと区別する）
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - t0 > 600) return;
+    const tabs = visibleTabs();
+    const i = tabs.indexOf(current());
+    const next = dx < 0 ? i + 1 : i - 1; // 左へフリックで次、右へフリックで前
+    if (i < 0 || next < 0 || next >= tabs.length) return;
+    showTab(tabs[next], dx < 0 ? 1 : -1);
+    window.scrollTo({ top: 0 });
+  }, { passive: true });
+
+  area.addEventListener('touchcancel', () => { tracking = false; }, { passive: true });
+})();
 
 // ---------- 注文 ----------
 function orderCard(o) {
