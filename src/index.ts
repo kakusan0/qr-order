@@ -205,6 +205,77 @@ async function markPaid(env: Env, order: OrderRow, pi: PaymentIntent): Promise<v
     .bind(jstDate(), order.store_id)
     .first<{ last_pickup_no: number }>();
   await env.DB.prepare(`UPDATE orders SET pickup_no = ? WHERE id = ?`).bind(row!.last_pickup_no, order.id).run();
+  await sendReceipt(env, order.id);
+}
+
+const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`;
+
+/** 購入完了メールを送る。二重送信しないよう先に送信済みの印を付け、失敗したら戻す（1時間ごとの定期処理が再送する） */
+async function sendReceipt(env: Env, orderId: string): Promise<void> {
+  const now = nowIso();
+  const order = await env.DB.prepare(
+    `UPDATE orders SET receipt_sent_at = ? WHERE id = ? AND status = 'paid' AND receipt_email IS NOT NULL AND receipt_sent_at IS NULL
+     RETURNING id, store_id, total, pickup_no, paid_at, receipt_email, origin, age_check_required`,
+  )
+    .bind(now, orderId)
+    .first<{
+      id: string;
+      store_id: string;
+      total: number;
+      pickup_no: number | null;
+      paid_at: string;
+      receipt_email: string;
+      origin: string | null;
+      age_check_required: number;
+    }>();
+  if (!order) return;
+
+  let sent = false;
+  try {
+    const store = await env.DB.prepare(`SELECT name, invoice_number FROM stores WHERE id = ?`)
+      .bind(order.store_id)
+      .first<{ name: string; invoice_number: string | null }>();
+    const { results: items } = await env.DB.prepare(
+      `SELECT order_id, name, unit_price, tax_rate, qty, age_restricted FROM order_items WHERE order_id = ?`,
+    )
+      .bind(order.id)
+      .all<ItemRow>();
+    const pickup = String(order.pickup_no ?? '').padStart(3, '0');
+    const paidAt = new Date(order.paid_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', dateStyle: 'long', timeStyle: 'short' });
+    const lines = [
+      `${store!.name} でのご購入ありがとうございます。`,
+      '',
+      `受取番号: ${pickup}`,
+      '',
+      'お支払いが完了しました。下記のページを店舗スタッフにお見せいただき、商品をお受け取りください。',
+      ...(order.origin ? [`${order.origin}/order/${order.id}`] : []),
+      ...(order.age_check_required ? ['', '年齢確認が必要な商品が含まれています。年齢を確認できるもの（身分証など）をご用意ください。'] : []),
+      '',
+      '--- ご利用明細 ---',
+      `店舗: ${store!.name}`,
+      ...(store!.invoice_number ? [`登録番号: ${store!.invoice_number}`] : []),
+      `取引日時: ${paidAt}`,
+      `注文ID: ${order.id}`,
+      '',
+      ...items.map((i) => `${i.name}${i.tax_rate === 8 ? ' ※' : ''} × ${i.qty}  ${yen(i.unit_price * i.qty)}`),
+      '',
+      `合計（税込）: ${yen(order.total)}`,
+      ...taxSummary(items).map((t) => `${t.rate}%対象 ${yen(t.subtotal)}（内消費税 ${yen(t.tax)}）`),
+      ...(items.some((i) => i.tax_rate === 8) ? ['※は軽減税率（8%）対象商品です。'] : []),
+      '',
+      'このメールは、ご購入時に入力されたメールアドレスへ自動で送信しています。',
+      'お心当たりがない場合は、このメールを破棄してください。',
+    ];
+    sent = await sendMail(env, order.receipt_email, `【${store!.name}】ご購入ありがとうございます（受取番号 ${pickup}）`, lines.join('\n'));
+  } catch (e) {
+    console.error(e);
+  }
+  if (sent) {
+    // 送り終えたメールアドレスは保持しない
+    await env.DB.prepare(`UPDATE orders SET receipt_email = NULL WHERE id = ?`).bind(order.id).run();
+  } else {
+    await env.DB.prepare(`UPDATE orders SET receipt_sent_at = NULL WHERE id = ? AND receipt_sent_at = ?`).bind(order.id, now).run();
+  }
 }
 
 function getOrder(env: Env, id: string) {
@@ -261,9 +332,13 @@ app.post('/api/orders', async (c) => {
   if (!(await rateLimit(c.env, 'order', clientIp(c), 30, 300))) return c.json({ error: 'too_many_requests' }, 429);
 
   const body = (await c.req.json().catch(() => null)) as
-    | { storeId?: unknown; items?: unknown; ageConfirmed?: unknown; turnstileToken?: unknown }
+    | { storeId?: unknown; items?: unknown; ageConfirmed?: unknown; turnstileToken?: unknown; email?: unknown }
     | null;
   if (!body || typeof body.storeId !== 'string' || !Array.isArray(body.items)) return c.json({ error: 'bad_request' }, 400);
+  // 購入完了メールの送付先（任意）。入力があるのに形式が不正な場合は、届かないまま進まないよう受け付けない
+  const hasEmail = typeof body.email === 'string' && body.email.trim() !== '';
+  const receiptEmail = hasEmail ? parseEmail(body.email) : '';
+  if (hasEmail && !receiptEmail) return c.json({ error: 'bad_email' }, 400);
 
   const qty = new Map<string, number>();
   for (const it of body.items as { productId?: unknown; qty?: unknown }[]) {
@@ -301,13 +376,9 @@ app.post('/api/orders', async (c) => {
 
   const orderId = crypto.randomUUID();
   await c.env.DB.batch([
-    c.env.DB.prepare(`INSERT INTO orders (id, store_id, total, created_at, age_check_required) VALUES (?, ?, ?, ?, ?)`).bind(
-      orderId,
-      store.id,
-      total,
-      nowIso(),
-      ageCheck ? 1 : 0,
-    ),
+    c.env.DB.prepare(
+      `INSERT INTO orders (id, store_id, total, created_at, age_check_required, receipt_email, origin) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(orderId, store.id, total, nowIso(), ageCheck ? 1 : 0, receiptEmail || null, new URL(c.req.url).origin),
     ...products.map((p) =>
       c.env.DB.prepare(
         `INSERT INTO order_items (order_id, product_id, name, unit_price, tax_rate, qty, age_restricted) VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -1097,6 +1168,15 @@ async function cleanup(env: Env): Promise<void> {
       env.DB.prepare(`DELETE FROM orders WHERE id = ? AND status = 'pending'`).bind(order.id),
     ]);
   }
+
+  // 購入完了メール：送れなかったものを再送し、24 時間たっても送れなければ送付先を消去する
+  const { results: unsent } = await env.DB.prepare(
+    `SELECT id FROM orders WHERE status = 'paid' AND receipt_email IS NOT NULL AND receipt_sent_at IS NULL AND paid_at >= ? LIMIT 10`,
+  )
+    .bind(cutoff)
+    .all<{ id: string }>();
+  for (const o of unsent) await sendReceipt(env, o.id);
+  await env.DB.prepare(`UPDATE orders SET receipt_email = NULL WHERE receipt_email IS NOT NULL AND created_at < ?`).bind(cutoff).run();
 
   // 2) 保存期間を過ぎた注文データを削除する（帳簿の保存期間 7 年に余裕を持たせた日数が既定）
   const days = Math.max(Number(env.ORDER_RETENTION_DAYS) || 2922, 30);

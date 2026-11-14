@@ -181,6 +181,11 @@
       $('age-box').scrollIntoView({ block: 'center' });
       return;
     }
+    if (!$('receipt-email').checkValidity()) {
+      showError('メールアドレスの形式を確認してください。不要な場合は空欄にしてください。');
+      $('receipt-email').focus();
+      return;
+    }
     if (config.turnstileSiteKey && !turnstileToken) {
       showError('安全確認が終わっていません。数秒待ってからもう一度押してください。');
       return;
@@ -202,10 +207,12 @@
           items: [...cart].map(([productId, qty]) => ({ productId, qty })),
           ageConfirmed: hasRestricted() ? $('age-ok').checked : undefined,
           turnstileToken: turnstileToken || undefined,
+          email: $('receipt-email').value.trim() || undefined,
         }),
       });
       resetTurnstile(); // 確認結果は 1 回しか使えない
       if (!res.ok) {
+        if (res.status === 400 && (await res.clone().json().catch(() => ({}))).error === 'bad_email') throw new Error('メールアドレスの形式を確認してください。お支払いは発生していません。');
         if (res.status === 429) throw new Error('注文が集中しています。少し待ってからもう一度お試しください。お支払いは発生していません。');
         if (res.status === 403) throw new Error('安全確認に失敗しました。ページを再読み込みしてもう一度お試しください。お支払いは発生していません。');
         throw new Error(res.status === 409
