@@ -92,7 +92,7 @@
           <h2 id="form-title">商品を登録</h2>
           <form id="product-form" class="card form">
             <label>商品名<input id="p-name" required maxlength="60" autocomplete="off"></label>
-            <label>価格（税込・円）<input id="p-price" type="number" inputmode="numeric" required min="50" max="1000000" step="1"></label>
+            <label>価格（税込・円）<input id="p-price" type="text" inputmode="numeric" pattern="[0-9]*" data-digits required maxlength="7" autocomplete="off" enterkeyhint="done"></label>
             <label>税率
               <select id="p-tax">
                 <option value="10">10%（標準）</option>
@@ -101,7 +101,7 @@
             </label>
             <div class="field">
               <label for="p-barcode">バーコード（JAN・任意）</label>
-              <div class="actions"><input id="p-barcode" inputmode="numeric" pattern="[0-9]{8}|[0-9]{12,13}" maxlength="13" autocomplete="off" placeholder="例: 4901234567894"><button id="p-scan" type="button">カメラで読み取る</button></div>
+              <div class="actions"><input id="p-barcode" type="text" inputmode="numeric" pattern="[0-9]{8}|[0-9]{12,13}" data-digits maxlength="13" autocomplete="off" placeholder="例: 4901234567894"><button id="p-scan" type="button">カメラで読み取る</button></div>
               <p id="barcode-note" class="note" hidden></p>
             </div>
             <label class="check"><input id="p-age" type="checkbox">年齢確認が必要な商品（酒類・たばこ等）</label>
@@ -172,7 +172,7 @@
   <form method="dialog" class="form" id="refund-form">
     <h3 id="refund-title">返金</h3>
     <p id="refund-info" class="note"></p>
-    <label>返金額（円）<input id="refund-amount" type="number" inputmode="numeric" required min="1" step="1"></label>
+    <label>返金額（円）<input id="refund-amount" type="text" inputmode="numeric" pattern="[0-9]*" data-digits required maxlength="7" autocomplete="off" enterkeyhint="done"></label>
     <p class="note">返金は取り消せません。決済に使われた支払方法へ返金されます。</p>
     <div class="actions"><button id="refund-ok" class="primary" value="ok">返金する</button><button class="ghost" value="cancel" formnovalidate>やめる</button></div>
   </form>
@@ -194,6 +194,14 @@ async function api(path, opts) {
   return res.json();
 }
 const post = (path, body, method) => api(path, { method: method || 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+
+// 数字だけの入力欄：スマホではテンキーを表示し、全角数字は半角に直し、数字以外は取り除く
+for (const input of document.querySelectorAll('input[data-digits]')) {
+  input.addEventListener('input', () => {
+    const v = input.value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/\D/g, '');
+    if (v !== input.value) input.value = v;
+  });
+}
 
 // ---------- メニュー ----------
 function showTab(name) {
@@ -270,7 +278,6 @@ function openRefund(o) {
   const remaining = o.total - o.refundedAmount;
   $('refund-title').textContent = '受取番号 ' + no(o.pickupNo) + ' の返金';
   $('refund-info').textContent = '注文額 ' + yen(o.total) + ' / 返金済 ' + yen(o.refundedAmount) + ' / 返金できる額 ' + yen(remaining);
-  $('refund-amount').max = remaining;
   $('refund-amount').value = remaining;
   $('refund-dialog').showModal();
 }
