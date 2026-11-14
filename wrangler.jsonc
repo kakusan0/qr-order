@@ -11,8 +11,7 @@
     {
       "binding": "DB",
       "database_name": "qr-order",
-      // `npx wrangler d1 create qr-order` の出力にある database_id に置き換えてください
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "2a9289c4-0b95-42fe-afc5-49b1f82a12e9",
       "migrations_dir": "migrations"
     }
   ],
