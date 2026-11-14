@@ -52,8 +52,8 @@ app.onError((err, c) => {
 // ---------- Stripe ----------
 
 class StripeError extends Error {
-  constructor(public status: number, public type: string, public code: string) {
-    super(`stripe ${status} ${type} ${code}`.trim());
+  constructor(public status: number, public type: string, public code: string, detail = '') {
+    super(`stripe ${status} ${type} ${code} ${detail}`.replace(/\s+/g, ' ').trim().slice(0, 300));
   }
 }
 
@@ -73,10 +73,12 @@ async function stripe<T>(
   }
   const base = env.STRIPE_API_BASE || 'https://api.stripe.com';
   const res = await fetch(`${base}/v1${path}`, { method, headers, body });
-  const json = (await res.json().catch(() => ({}))) as T & { error?: { message?: string; type?: string; code?: string } };
+  const json = (await res.json().catch(() => ({}))) as T & { error?: { message?: string; type?: string; code?: string; param?: string } };
   if (!res.ok) {
     console.error(`Stripe ${path} ${res.status}: ${json.error?.message ?? ''}`);
-    throw new StripeError(res.status, json.error?.type ?? '', json.error?.code ?? '');
+    // 認証エラー以外は、原因特定のため Stripe の説明文も残す（リクエスト内容の不備の説明で、鍵は含まれない）
+    const detail = res.status === 401 ? '' : `param=${json.error?.param ?? ''} ${json.error?.message ?? ''}`;
+    throw new StripeError(res.status, json.error?.type ?? '', json.error?.code ?? '', detail);
   }
   return json;
 }
