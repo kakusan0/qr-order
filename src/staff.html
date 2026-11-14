@@ -104,6 +104,11 @@
         <section data-admin hidden>
           <h2 id="form-title">商品を登録</h2>
           <form id="product-form" class="card form">
+            <div class="field">
+              <label for="p-barcode">バーコード（JAN・任意）</label>
+              <div class="actions"><input id="p-barcode" type="text" inputmode="numeric" pattern="[0-9]{8}|[0-9]{12,13}" data-digits maxlength="13" autocomplete="off" placeholder="例: 4901234567894"><button id="p-scan" type="button">カメラで読み取る</button></div>
+              <p id="barcode-note" class="note" hidden></p>
+            </div>
             <label>商品名<input id="p-name" required maxlength="60" autocomplete="off"></label>
             <label>価格（税込・円）<input id="p-price" type="text" inputmode="none" pattern="[0-9]*" data-digits data-keypad required maxlength="7" autocomplete="off" enterkeyhint="done"></label>
             <label>税率
@@ -112,11 +117,6 @@
                 <option value="8">8%（軽減税率：持ち帰りの飲食料品など）</option>
               </select>
             </label>
-            <div class="field">
-              <label for="p-barcode">バーコード（JAN・任意）</label>
-              <div class="actions"><input id="p-barcode" type="text" inputmode="numeric" pattern="[0-9]{8}|[0-9]{12,13}" data-digits maxlength="13" autocomplete="off" placeholder="例: 4901234567894"><button id="p-scan" type="button">カメラで読み取る</button></div>
-              <p id="barcode-note" class="note" hidden></p>
-            </div>
             <label class="check"><input id="p-age" type="checkbox">年齢確認が必要な商品（酒類・たばこ等）</label>
             <div class="actions"><button id="p-submit" class="primary">登録する</button><button id="p-cancel" type="button" class="ghost" hidden>キャンセル</button></div>
             <p id="product-error" class="error" hidden></p>
