@@ -1,0 +1,69 @@
+:root {
+  --bg: #f6f6f4; --card: #fff; --text: #1c1c1a; --muted: #66665f; --line: #deded8;
+  --accent: #0b6b4f; --accent-text: #fff; --warn: #a23b1b;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #151614; --card: #20211f; --text: #ecece8; --muted: #a3a39b; --line: #383936; --accent: #4cc39a; --accent-text: #08130f; --warn: #ff9a78; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+main { max-width: 560px; margin: 0 auto; padding: 16px 16px 48px; }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+h1 { font-size: 1.15rem; margin: 0; }
+h2 { font-size: 1rem; margin: 28px 0 8px; }
+a { color: var(--accent); }
+.note { color: var(--muted); font-size: .875rem; }
+.error { color: var(--warn); font-weight: 600; }
+.card, .order { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 10px 0; }
+button, select { font: inherit; }
+button { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 10px; padding: 8px 14px; min-height: 44px; cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 700; }
+button.ghost { color: var(--muted); }
+select { padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+.badge { background: var(--accent); color: var(--accent-text); border-radius: 999px; padding: 0 9px; font-size: .85rem; }
+
+/* 商品一覧 */
+.product { display: flex; align-items: center; gap: 12px; }
+.product .name { flex: 1; min-width: 0; }
+.product .price { color: var(--muted); font-size: .9rem; }
+.stepper { display: flex; align-items: center; gap: 6px; }
+.stepper button { width: 44px; padding: 0; font-size: 1.2rem; }
+.stepper output { min-width: 1.6em; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* 確認・レシート */
+table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+td { padding: 4px 0; vertical-align: top; }
+td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+tr.sum td { border-top: 1px solid var(--line); font-weight: 700; padding-top: 8px; }
+dl.terms { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: .875rem; margin: 12px 0 0; }
+dl.terms dt { color: var(--muted); }
+dl.terms dd { margin: 0; }
+#pay { margin-top: 14px; min-height: 48px; }
+
+/* 注文状況 */
+.ticket { text-align: center; }
+.ticket .state { font-weight: 700; font-size: 1.05rem; }
+.ticket .pickup { display: block; font-size: 4.5rem; font-weight: 800; line-height: 1.15; letter-spacing: .06em; font-variant-numeric: tabular-nums; }
+.ticket.paid { border-color: var(--accent); border-width: 2px; }
+.ticket.paid .state { color: var(--accent); }
+.ticket.refunded .state, .ticket.pending .state { color: var(--warn); }
+.clock { font-variant-numeric: tabular-nums; color: var(--muted); font-size: .875rem; }
+
+/* スタッフ */
+.order-head { display: flex; align-items: baseline; gap: 12px; }
+.order-head .pickup { font-size: 1.9rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.order-head .status { flex: 1; color: var(--muted); font-size: .875rem; }
+.order.paid { border-color: var(--accent); border-width: 2px; }
+.order.paid .status { color: var(--accent); font-weight: 700; }
+.order ul { margin: 6px 0 10px; padding-left: 1.2em; }
+.actions { display: flex; gap: 8px; }
+.actions .primary { flex: 1; }
+#qr { background: #fff; border-radius: 8px; }
+
+footer { max-width: 560px; margin: 0 auto; padding: 0 16px 32px; font-size: .8rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.legal h2 { border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.legal th { text-align: left; vertical-align: top; padding: 8px 12px 8px 0; white-space: nowrap; font-weight: 600; width: 9em; }
+.legal td { padding: 8px 0; }
+.legal tr { border-bottom: 1px solid var(--line); }
+.todo { background: #fff3c4; color: #5a4300; padding: 0 4px; border-radius: 4px; }

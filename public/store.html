@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ご注文</title>
+<link rel="stylesheet" href="/style.css">
+<script src="https://js.stripe.com/v3/" defer></script>
+<script src="/store.js" defer></script>
+</head>
+<body>
+<header class="bar"><h1 id="store-name">ご注文</h1></header>
+<main>
+  <p id="error" class="error" role="alert" hidden></p>
+  <p id="last-order" hidden><a href="#">直近のご注文（受取番号）を表示する</a></p>
+
+  <h2>商品を選ぶ</h2>
+  <p class="note">表示価格はすべて税込です。※印は軽減税率（8%）対象。</p>
+  <div id="products"></div>
+
+  <section id="confirm" hidden>
+    <h2>ご注文内容の確認</h2>
+    <div class="card">
+      <table><tbody id="lines"></tbody></table>
+      <dl class="terms">
+        <dt>支払方法</dt><dd>Apple Pay / Google Pay</dd>
+        <dt>支払時期</dt><dd>下のボタンで認証した時点で決済が確定します</dd>
+        <dt>引渡時期</dt><dd>決済完了後、この店舗の店頭ですぐにお渡しします</dd>
+        <dt>キャンセル</dt><dd>決済後のお客様都合によるキャンセル・返品はできません。商品不良・誤りの場合は店頭で返金または交換します</dd>
+      </dl>
+      <div id="pay"></div>
+      <p id="pay-note" class="note" hidden></p>
+    </div>
+  </section>
+</main>
+<footer>
+  <a href="/legal/tokushoho">特定商取引法に基づく表記</a>
+  <a href="/legal/terms">利用規約</a>
+  <a href="/legal/privacy">プライバシーポリシー</a>
+</footer>
+</body>
+</html>

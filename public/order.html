@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>ご注文状況</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/order.js" defer></script>
+</head>
+<body>
+<header class="bar"><h1 id="store-name">ご注文状況</h1></header>
+<main>
+  <div id="ticket" class="card ticket pending" aria-live="polite">
+    <div id="state" class="state">お支払いを確認しています…</div>
+    <span id="pickup" class="pickup" hidden></span>
+    <div id="hint" class="note"></div>
+    <div id="clock" class="clock"></div>
+  </div>
+
+  <section id="receipt" hidden>
+    <h2>ご利用明細</h2>
+    <div class="card">
+      <div id="receipt-head" class="note"></div>
+      <table><tbody id="lines"></tbody></table>
+      <p class="note">※は軽減税率（8%）対象商品です。</p>
+    </div>
+  </section>
+</main>
+<footer>
+  <a href="/legal/tokushoho">特定商取引法に基づく表記</a>
+  <a href="/legal/terms">利用規約</a>
+  <a href="/legal/privacy">プライバシーポリシー</a>
+</footer>
+</body>
+</html>
