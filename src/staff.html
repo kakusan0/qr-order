@@ -35,6 +35,11 @@
   dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text); padding: 20px; width: min(420px, calc(100% - 32px)); }
   dialog::backdrop { background: rgba(0, 0, 0, .45); }
   dialog h3 { margin: 0 0 12px; font-size: 1.05rem; }
+  .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .keypad button { min-height: 56px; font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; padding: 0; touch-action: manipulation; }
+  .keypad button:active { background: var(--accent); color: var(--accent-text); }
+  .keypad .wide { grid-column: 1 / -1; min-height: 44px; font-size: 1rem; font-weight: 600; color: var(--muted); }
+  input[data-keypad] { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
   #scan-video { display: block; width: 100%; max-height: 50vh; border-radius: 8px; background: #000; object-fit: cover; }
   .form .field { display: grid; gap: 4px; }
   .form .field > label { font-size: .875rem; color: var(--muted); }
@@ -92,7 +97,7 @@
           <h2 id="form-title">商品を登録</h2>
           <form id="product-form" class="card form">
             <label>商品名<input id="p-name" required maxlength="60" autocomplete="off"></label>
-            <label>価格（税込・円）<input id="p-price" type="text" inputmode="numeric" pattern="[0-9]*" data-digits required maxlength="7" autocomplete="off" enterkeyhint="done"></label>
+            <label>価格（税込・円）<input id="p-price" type="text" inputmode="none" pattern="[0-9]*" data-digits data-keypad required maxlength="7" autocomplete="off" enterkeyhint="done"></label>
             <label>税率
               <select id="p-tax">
                 <option value="10">10%（標準）</option>
@@ -172,7 +177,7 @@
   <form method="dialog" class="form" id="refund-form">
     <h3 id="refund-title">返金</h3>
     <p id="refund-info" class="note"></p>
-    <label>返金額（円）<input id="refund-amount" type="text" inputmode="numeric" pattern="[0-9]*" data-digits required maxlength="7" autocomplete="off" enterkeyhint="done"></label>
+    <label>返金額（円）<input id="refund-amount" type="text" inputmode="none" pattern="[0-9]*" data-digits data-keypad required maxlength="7" autocomplete="off" enterkeyhint="done"></label>
     <p class="note">返金は取り消せません。決済に使われた支払方法へ返金されます。</p>
     <div class="actions"><button id="refund-ok" class="primary" value="ok">返金する</button><button class="ghost" value="cancel" formnovalidate>やめる</button></div>
   </form>
@@ -201,6 +206,35 @@ for (const input of document.querySelectorAll('input[data-digits]')) {
     const v = input.value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/\D/g, '');
     if (v !== input.value) input.value = v;
   });
+}
+
+// 画面上のテンキー：金額の入力欄の下に数字ボタンを並べる（PC ではキーボードからも入力できる）
+for (const input of document.querySelectorAll('input[data-keypad]')) {
+  const pad = document.createElement('div');
+  pad.className = 'keypad';
+  pad.setAttribute('role', 'group');
+  pad.setAttribute('aria-label', 'テンキー');
+  const max = Number(input.getAttribute('maxlength')) || 7;
+  const set = (v) => {
+    input.value = v.replace(/^0+(?=\d)/, '').slice(0, max); // 先頭の余分な 0 は付けない
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const keys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '0', '00', '⌫'];
+  for (const k of keys) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = k;
+    if (k === '⌫') b.setAttribute('aria-label', '1 文字消す');
+    b.onclick = () => set(k === '⌫' ? input.value.slice(0, -1) : input.value + k);
+    pad.append(b);
+  }
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'wide';
+  clear.textContent = 'クリア';
+  clear.onclick = () => set('');
+  pad.append(clear);
+  (input.closest('label') || input).insertAdjacentElement('afterend', pad);
 }
 
 // ---------- メニュー ----------
