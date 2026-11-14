@@ -188,7 +188,10 @@
       return payNote('現在お支払いを受け付けられません。店舗スタッフにお声がけください。');
     }
     stripe = Stripe(config.publishableKey, { locale: 'ja' });
-    elements = stripe.elements({ mode: 'payment', amount, currency: 'jpy' });
+    // 決済フォームの色も、表示の明るさ（ライト / ダーク）に合わせる
+    const appearance = () => ({ theme: window.effectiveTheme && window.effectiveTheme() === 'dark' ? 'night' : 'stripe' });
+    elements = stripe.elements({ mode: 'payment', amount, currency: 'jpy', appearance: appearance() });
+    document.addEventListener('themechange', () => { try { elements.update({ appearance: appearance() }); } catch { /* 見た目の更新に失敗しても決済は続けられる */ } });
     const payment = elements.create('payment', { layout: { type: 'accordion', defaultCollapsed: false, radios: true, spacedAccordionItems: false } });
     payment.on('ready', () => { $('pay-button').hidden = false; });
     payment.on('loaderror', () => payNote('決済方法を読み込めませんでした。再読み込みしてください。'));

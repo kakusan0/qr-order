@@ -13,8 +13,9 @@
   --r-sm: 12px; --r-md: 16px; --r-lg: 22px;
   --ease: cubic-bezier(.2, .8, .2, 1);
 }
+/* ダークの配色。「自動」で端末がダークのとき、または手動で「ダーク」を選んだときに使う */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #101311; --card: #1a1e1b; --text: #eef0ea; --muted: #a2a89e; --line: #2c322d;
     --accent: #55d6a8; --accent-text: #06140f; --warn: #ff9d7a;
     --glow-1: rgba(60, 200, 150, .13); --glow-2: rgba(250, 190, 90, .06);
@@ -23,6 +24,16 @@
     --shadow-brand: 0 6px 18px rgba(0, 0, 0, .45);
   }
 }
+:root[data-theme="dark"] {
+  --bg: #101311; --card: #1a1e1b; --text: #eef0ea; --muted: #a2a89e; --line: #2c322d;
+  --accent: #55d6a8; --accent-text: #06140f; --warn: #ff9d7a;
+  --glow-1: rgba(60, 200, 150, .13); --glow-2: rgba(250, 190, 90, .06);
+  --glass: rgba(26, 30, 27, .72);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3); --shadow-md: 0 12px 28px rgba(0, 0, 0, .4);
+  --shadow-brand: 0 6px 18px rgba(0, 0, 0, .45);
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -231,3 +242,10 @@ body.has-cart-bar footer { padding-bottom: 104px; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .scan-guide b { display: none; }
 }
+
+/* 表示の明るさの切り替え */
+.theme-switch { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: color-mix(in srgb, var(--text) 8%, transparent); }
+.theme-switch button { min-height: 32px; padding: 2px 12px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: .8rem; font-weight: 700; box-shadow: none; }
+.theme-switch button[aria-pressed="true"] { background: var(--card); color: var(--text); box-shadow: var(--shadow-sm); }
+footer .theme-switch { margin-top: 10px; flex-basis: 100%; width: fit-content; }
+main > .theme-switch { margin-top: 24px; }
