@@ -27,7 +27,7 @@
       refunded: ['返金済み', 'このご注文は返金されました。'],
     }[o.status];
     $('state').textContent = view[0];
-    $('hint').textContent = view[1];
+    $('hint').textContent = view[1] + (o.status === 'paid' && o.ageCheckRequired && !o.ageChecked ? ' 年齢確認が必要な商品が含まれています。年齢を確認できるもの（身分証など）をご用意ください。' : '');
     const showNo = o.status === 'paid' || o.status === 'handed_over';
     $('pickup').hidden = !showNo;
     $('pickup').textContent = o.pickupNo == null ? '…' : String(o.pickupNo).padStart(3, '0');
@@ -42,6 +42,7 @@
     $('lines').replaceChildren(
       ...o.items.map((i) => row(i.name + (i.taxRate === 8 ? ' ※' : '') + ' × ' + i.qty, yen(i.unitPrice * i.qty))),
       row('合計（税込）', yen(o.total), 'sum'),
+      ...(o.refundedAmount > 0 ? [row('返金済み', '−' + yen(o.refundedAmount))] : []),
       ...o.tax.map((t) => row(t.rate + '%対象 ' + yen(t.subtotal) + '（内消費税）', yen(t.tax))),
     );
   }

@@ -149,8 +149,42 @@
     payment.mount('#pay');
   }
 
+  const hasRestricted = () => [...cart.keys()].some((id) => products.get(id).ageRestricted);
+
+  // Turnstile（設定されている場合のみ）。自動操作による注文の大量作成を防ぐ
+  let turnstileToken = '', turnstileWidget = null;
+  function setupTurnstile() {
+    if (!config.turnstileSiteKey || turnstileWidget !== null || document.getElementById('turnstile-script')) return;
+    const sc = document.createElement('script');
+    sc.id = 'turnstile-script';
+    sc.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    sc.onload = () => window.turnstile.ready(() => {
+      turnstileWidget = window.turnstile.render('#turnstile', {
+        sitekey: config.turnstileSiteKey,
+        language: 'ja',
+        callback: (t) => { turnstileToken = t; },
+        'expired-callback': () => { turnstileToken = ''; },
+        'error-callback': () => { turnstileToken = ''; },
+      });
+    });
+    document.head.append(sc);
+  }
+  function resetTurnstile() {
+    turnstileToken = '';
+    if (turnstileWidget !== null && window.turnstile) window.turnstile.reset(turnstileWidget);
+  }
+
   async function pay() {
     if (paying || !elements || cart.size === 0) return;
+    if (hasRestricted() && !$('age-ok').checked) {
+      showError('年齢確認が必要な商品が含まれています。20 歳以上であることを確認のうえ、チェックを入れてください。');
+      $('age-box').scrollIntoView({ block: 'center' });
+      return;
+    }
+    if (config.turnstileSiteKey && !turnstileToken) {
+      showError('安全確認が終わっていません。数秒待ってからもう一度押してください。');
+      return;
+    }
     paying = true;
     $('pay-button').disabled = true;
     $('error').hidden = true;
@@ -163,9 +197,17 @@
       const res = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ storeId, items: [...cart].map(([productId, qty]) => ({ productId, qty })) }),
+        body: JSON.stringify({
+          storeId,
+          items: [...cart].map(([productId, qty]) => ({ productId, qty })),
+          ageConfirmed: hasRestricted() ? $('age-ok').checked : undefined,
+          turnstileToken: turnstileToken || undefined,
+        }),
       });
+      resetTurnstile(); // 確認結果は 1 回しか使えない
       if (!res.ok) {
+        if (res.status === 429) throw new Error('注文が集中しています。少し待ってからもう一度お試しください。お支払いは発生していません。');
+        if (res.status === 403) throw new Error('安全確認に失敗しました。ページを再読み込みしてもう一度お試しください。お支払いは発生していません。');
         throw new Error(res.status === 409
           ? '販売を終了した商品が含まれています。再読み込みしてカートを確認してください。'
           : res.status === 502
@@ -210,7 +252,7 @@
 
       const card = el('div', 'card product' + (id === justAdded ? ' added' : ''));
       const name = el('div', 'name');
-      name.append(el('div', null, p.name + mark), el('div', 'price', yen(p.price) + '（税込）'));
+      name.append(el('div', null, p.name + mark), el('div', 'price', yen(p.price) + '（税込）' + (p.ageRestricted ? '・年齢確認商品' : '')));
       const stepper = el('div', 'stepper');
       const minus = el('button', null, q === 1 ? '×' : '−'), out = el('output', null, String(q)), plus = el('button', null, '＋');
       minus.setAttribute('aria-label', q === 1 ? p.name + 'を削除' : p.name + 'を減らす');
@@ -240,6 +282,8 @@
       else elements.update({ amount: sum });
     }
     $('pay-button').textContent = yen(sum) + ' を支払う';
+    $('age-box').hidden = !hasRestricted();
+    if (hasItems) setupTurnstile();
 
     // 画面下に常に出すカートの点数と合計
     const count = [...cart.values()].reduce((a, b) => a + b, 0);

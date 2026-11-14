@@ -17,5 +17,7 @@
   ],
   // ダッシュボードで設定した変数をデプロイ時に消さない
   "keep_vars": true,
+  // 1時間ごと：未払い注文の整理、保存期間を過ぎたデータの削除
+  "triggers": { "crons": ["23 * * * *"] },
   "observability": { "enabled": true }
 }
