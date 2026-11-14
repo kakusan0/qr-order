@@ -145,6 +145,11 @@ button.wide { display: block; width: 100%; margin: 12px 0; }
 .scan-flash.ok { opacity: 1; border-color: #1fae7a; background: rgba(14, 122, 84, .55); }
 .scan-flash.ng { opacity: 1; border-color: #e0572e; background: rgba(170, 55, 20, .55); }
 
+/* 読み取り中に、いま読めている内容を表示する */
+.scan-live { margin: 10px 0 0; padding: 10px 12px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--text) 6%, transparent); font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .04em; min-height: 2.9em; overflow-wrap: anywhere; }
+.scan-live.ok { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.scan-live.ng { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
+
 /* 通知（画面上部に固定） */
 .toast { position: fixed; z-index: 20; top: 12px; left: 50%; transform: translateX(-50%); width: min(548px, calc(100% - 24px)); display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: var(--r-lg); background: linear-gradient(135deg, var(--brand-1), var(--brand-2)); color: #fff; font-size: 1.05rem; font-weight: 800; line-height: 1.4; box-shadow: 0 12px 32px rgba(0, 0, 0, .28); }
 .toast.warn { background: linear-gradient(135deg, #9a3817, #b84a22); }

@@ -48,18 +48,31 @@
 
   window.ocrBusy = () => busy;
 
-  /** canvas の映像から番号を読む。読めなければ null。同時に 1 件だけ処理する */
-  window.readDigits = async (canvas) => {
+  let ready = false;
+
+  /**
+   * canvas の映像から番号を読む。読めなければ null。同時に 1 件だけ処理する。
+   * onInfo には途中経過を渡す：{ stage: 'loading' }（認識の準備中）、{ stage: 'text', text }（いま読めている数字）
+   */
+  window.readDigits = async (canvas, onInfo) => {
     if (busy || !window.validBarcode) return null;
     busy = true;
     try {
+      if (!ready && onInfo) onInfo({ stage: 'loading' });
       // 認識中に映像が書き換わらないよう、写しを取って渡す
       const copy = document.createElement('canvas');
       copy.width = canvas.width; copy.height = canvas.height;
       copy.getContext('2d').drawImage(canvas, 0, 0);
       const worker = await getWorker();
+      ready = true;
       const { data } = await worker.recognize(copy);
-      return findCode(data.text || '');
+      const text = data.text || '';
+      if (onInfo) {
+        // 数字がいちばん多く写っている行を、いま読めている内容として見せる
+        const best = text.split('\n').map((l) => l.replace(/[^\d ]/g, '').replace(/ +/g, ' ').trim()).sort((a, b) => b.replace(/ /g, '').length - a.replace(/ /g, '').length)[0] || '';
+        onInfo({ stage: 'text', text: best.slice(0, 24) });
+      }
+      return findCode(text);
     } catch {
       return null;
     } finally {

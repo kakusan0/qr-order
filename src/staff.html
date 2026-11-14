@@ -45,6 +45,8 @@
   .keypad button:active { background: var(--brand-1); color: var(--on-brand); }
   .keypad .wide { grid-column: 1 / -1; min-height: 44px; font-size: 1rem; font-weight: 600; color: var(--muted); box-shadow: none; }
   input[data-keypad] { font-size: 1.35rem; font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; }
+  .scan-live { margin: 10px 0 0; padding: 10px 12px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--text) 6%, transparent); font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: .04em; min-height: 2.9em; overflow-wrap: anywhere; }
+  .scan-live.ok { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
   #scan-video { display: block; width: 100%; max-height: 50vh; border-radius: var(--r-md); background: #000; object-fit: cover; }
   .form .field { display: grid; gap: 6px; }
   .form .field > label { font-size: .875rem; color: var(--muted); font-weight: 600; }
@@ -195,6 +197,7 @@
 <dialog id="scan-dialog">
   <h3>バーコードを読み取る</h3>
   <video id="scan-video" playsinline muted></video>
+  <p id="scan-live" class="scan-live" aria-live="polite">バーコードを探しています…</p>
   <p id="scan-msg" class="note">商品のバーコードをカメラに写してください。線が読めないときは、下の数字を大きく写すと読み取ります。読み取ると自動で閉じます。</p>
   <div class="actions"><button id="scan-switch" type="button" hidden>カメラを切り替える</button><button id="scan-cancel" type="button" class="ghost">やめる</button></div>
 </dialog>
@@ -556,9 +559,14 @@ function scanTick() {
     // バーコードの線が 1.5 秒読めなければ、下の数字の文字認識も試す。誤読を避けるため、同じ番号を 2 回続けて読めたら採用する
     if (window.readDigits && !window.ocrBusy() && Date.now() - scanStartedAt > 1500) {
       const session = scanSession;
-      window.readDigits(scanCanvas).then((digits) => {
+      const live = (msg, ok) => { if (session === scanSession && scanStream) { $('scan-live').textContent = msg; $('scan-live').className = 'scan-live' + (ok ? ' ok' : ''); } };
+      window.readDigits(scanCanvas, (info) => {
+        if (info.stage === 'loading') live('数字の読み取りを準備しています…（初回のみ数秒かかります）');
+        else live(info.text ? '読めている数字: ' + info.text : 'バーコードを探しています…（線が読めないときは、下の数字を大きく写してください）');
+      }).then((digits) => {
         if (session !== scanSession || !scanStream) return; // 読み取りを終えたあとの結果は捨てる
-        if (digits && digits === lastDigits) { stopScan(); onBarcode(digits); }
+        if (digits && digits === lastDigits) { stopScan(); onBarcode(digits); return; }
+        if (digits) live('番号 ' + digits + ' を確認しています…（そのまま写し続けてください）', true);
         lastDigits = digits;
       });
     }
@@ -607,6 +615,7 @@ $('p-scan').onclick = async () => {
     $('scan-switch').hidden = cams.length < 2; // カメラが 2 つ以上ある端末でだけ出す
   } catch { $('scan-switch').hidden = true; }
   scanStartedAt = Date.now(); scanSession++; lastDigits = null;
+  $('scan-live').textContent = 'バーコードを探しています…'; $('scan-live').className = 'scan-live';
   $('scan-dialog').showModal();
   $('scan-video').srcObject = scanStream;
   await $('scan-video').play().catch(() => {});

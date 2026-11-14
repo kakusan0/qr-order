@@ -399,6 +399,20 @@
   const canvas = document.createElement('canvas');
   let stream = null, raf = 0, lastText = '', lastSeen = 0, lastHit = 0, scanSession = 0;
 
+  // 読み取り中の表示
+  function live(msg, ok, ng) {
+    $('scan-live').textContent = msg;
+    $('scan-live').className = 'scan-live' + (ok ? ' ok' : ng ? ' ng' : '');
+  }
+  function describeQr(text) {
+    try {
+      const u = new URL(text);
+      const p = products.get(u.searchParams.get('add') || '');
+      if (u.origin === location.origin && u.pathname.startsWith('/s/')) return p ? 'QR コード: ' + p.name : 'QR コード: 店舗・商品の QR';
+    } catch { /* URL でない QR */ }
+    return 'QR コード: ' + text.slice(0, 40);
+  }
+
   function stopScan() {
     cancelAnimationFrame(raf);
     if (stream) stream.getTracks().forEach((t) => t.stop());
@@ -421,6 +435,8 @@
       // QR が写っていなければ、商品バーコードとして読む
       const text = (qr && qr.data) || (window.readBarcode ? window.readBarcode(canvas) : null);
       if (text) {
+        // 読み取れた内容をそのまま見せる（QR は URL なので、商品名か「店舗の QR」に置き換える）
+        live(/^\d+$/.test(text) ? 'バーコード: ' + text : describeQr(text), true);
         const now = Date.now();
         // 同じコードを写し続けても通知は1回だけ。いったん外して2秒たつと再度反応する
         if (text !== lastText || now - lastSeen > 2000) {
@@ -432,9 +448,14 @@
       } else if (window.readDigits && !window.ocrBusy() && Date.now() - lastHit > 1500) {
         // 線が読めないときは、バーコードの下の数字を文字認識で読む。登録済みの商品の番号と一致したときだけ使う
         const session = scanSession;
-        window.readDigits(canvas).then((digits) => {
+        window.readDigits(canvas, (info) => {
+          if (session !== scanSession || !stream) return;
+          if (info.stage === 'loading') live('数字の読み取りを準備しています…（初回のみ数秒かかります）');
+          else live(info.text ? '読めている数字: ' + info.text : 'コードを探しています…（線が読めないときは、下の数字を大きく写してください）');
+        }).then((digits) => {
           if (!digits || session !== scanSession || !stream) return;
-          if (!data.products.some((x) => x.barcode === digits)) return;
+          if (!data.products.some((x) => x.barcode === digits)) { live('番号 ' + digits + ' は、この店舗で販売している商品ではありません', false, true); return; }
+          live('番号: ' + digits, true);
           const now = Date.now();
           if (digits !== lastText || now - lastSeen > 2000) {
             handleCode(digits).then(() => { $('scan-status').textContent = $('toast-text').textContent; });
@@ -496,6 +517,7 @@
     lastText = '';
     lastHit = Date.now();
     scanSession++;
+    live('コードを探しています…');
     $('scanner').hidden = false;
     $('scan-open').hidden = true;
     $('scan-status').textContent = '商品の QR コードまたはバーコードを枠内に写してください。線が読めないときは、下の数字を大きく写してください。';
