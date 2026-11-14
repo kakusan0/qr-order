@@ -78,7 +78,14 @@
           confirmParams: { return_url: location.origin + '/order/' + orderId },
           redirect: 'if_required',
         });
-        if (error) throw new Error(error.message || 'お支払いを完了できませんでした。');
+        if (error) {
+          fetch('/api/orders/' + orderId + '/client-error', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: [error.type, error.code, error.decline_code, error.message].filter(Boolean).join(' | ') }),
+          }).catch(() => {});
+          throw new Error(error.message || 'お支払いを完了できませんでした。');
+        }
         location.href = '/order/' + orderId;
       } catch (e) {
         showError(e.message);

@@ -287,6 +287,18 @@ app.get('/api/orders/:id', async (c) => {
   });
 });
 
+// 決済画面で起きたエラーの内容を、原因調査のため未払いの注文に記録する
+app.post('/api/orders/:id/client-error', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { message?: unknown } | null;
+  const message = typeof body?.message === 'string' ? body.message.replace(/\s+/g, ' ').slice(0, 300) : '';
+  if (message) {
+    await c.env.DB.prepare(`UPDATE orders SET payment_error = ? WHERE id = ? AND status = 'pending'`)
+      .bind(`client: ${message}`, c.req.param('id'))
+      .run();
+  }
+  return c.json({ ok: true });
+});
+
 app.post('/api/stripe/webhook', async (c) => {
   const raw = await c.req.text();
   if (!(await verifyStripeSignature(raw, c.req.header('Stripe-Signature'), c.env.STRIPE_WEBHOOK_SECRET))) {
