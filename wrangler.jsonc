@@ -15,5 +15,7 @@
       "migrations_dir": "migrations"
     }
   ],
+  // ダッシュボードで設定した変数をデプロイ時に消さない
+  "keep_vars": true,
   "observability": { "enabled": true }
 }
