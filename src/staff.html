@@ -502,20 +502,24 @@ function beep() {
 
 function onBarcode(code) {
   beep();
+  // 読み取りに成功したら、入力済みのほかの値（商品名・価格・税率・年齢確認）を必ずすべて消す。
+  // 編集中だった場合も編集をやめる。登録済みのバーコードでも、その商品の内容を勝手に入れ直さない
+  stopEdit();
+  $('p-barcode').value = code;
   const existing = productList.find((p) => p.barcode === code);
+  const note = $('barcode-note');
   if (existing) {
-    // 登録済みのバーコードなら、その商品の編集に切り替える
-    startEdit(existing);
-    $('barcode-note').textContent = 'このバーコードは「' + existing.name + '」として登録済みです。内容を編集できます。';
+    // 登録済みの商品は、ボタンを押したときだけ編集に切り替える
+    note.textContent = 'このバーコードは「' + existing.name + '」として登録済みです。 ';
+    const edit = el('button', null, 'この商品を編集する');
+    edit.type = 'button';
+    edit.onclick = () => startEdit(existing);
+    note.append(edit);
   } else {
-    // 読み取りに成功したら、入力済みの値（商品名・価格・税率・年齢確認）を必ずすべて消してから始める。
-    // 編集中だった場合も編集をやめて、新しい商品の登録に切り替える
-    stopEdit();
-    $('p-barcode').value = code;
-    $('barcode-note').textContent = 'バーコード ' + code + ' を読み取りました。';
+    note.textContent = 'バーコード ' + code + ' を読み取りました。';
     lookupBarcode(code);
   }
-  $('barcode-note').hidden = false;
+  note.hidden = false;
 }
 
 // バーコードから商品名を調べて入力欄に入れる。入力済みの商品名は上書きしない
