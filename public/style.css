@@ -121,3 +121,5 @@ button.danger { color: var(--warn); }
 
 .mail-box { display: grid; gap: 4px; margin: 14px 0 0; font-size: .875rem; color: var(--muted); }
 .mail-box input { font: inherit; padding: 10px; min-height: 44px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); width: 100%; }
+
+#methods-note { display: block; margin-top: 2px; font-size: .8rem; }

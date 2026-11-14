@@ -147,6 +147,35 @@
     payment.on('ready', () => { $('pay-button').hidden = false; });
     payment.on('loaderror', () => payNote('決済方法を読み込めませんでした。再読み込みしてください。'));
     payment.mount('#pay');
+    showAvailableMethods(amount);
+  }
+
+  // このブラウザ・端末で実際に使える決済方法だけを「支払方法」に表示する
+  async function showAvailableMethods(amount) {
+    const labels = { card: 'クレジットカード（JCB ほか）', apple_pay: 'Apple Pay', google_pay: 'Google Pay', link: 'Link', paypay: 'PayPay' };
+    const hints = {
+      apple_pay: 'Apple Pay は Safari（iPhone / Mac）でウォレットにカードを登録していると使えます',
+      google_pay: 'Google Pay は Chrome で Google アカウントにカードを登録していると使えます',
+    };
+    // 店舗側で有効にしている決済方法（取得できなければ既定の一覧）
+    const enabled = Array.isArray(config.paymentMethods) && config.paymentMethods.length
+      ? config.paymentMethods
+      : ['card', 'apple_pay', 'google_pay', 'link', 'paypay'];
+    let wallets;
+    try {
+      // ブラウザと端末がウォレット決済に対応しているかを Stripe 経由で確認する
+      const request = stripe.paymentRequest({ country: 'JP', currency: 'jpy', total: { label: '合計', amount } });
+      wallets = (await request.canMakePayment()) || {};
+    } catch {
+      return; // 確認できないときは一覧を変えない
+    }
+    const usable = (m) => (m === 'apple_pay' ? !!wallets.applePay : m === 'google_pay' ? !!wallets.googlePay : true);
+    const shown = enabled.filter(usable);
+    const missing = enabled.filter((m) => !usable(m) && hints[m]);
+    if (!shown.length) return;
+    $('methods').textContent = shown.map((m) => labels[m] || m).join(' / ');
+    $('methods-note').textContent = missing.length ? '（' + missing.map((m) => hints[m]).join('。') + '）' : '';
+    $('methods-note').hidden = !missing.length;
   }
 
   const hasRestricted = () => [...cart.keys()].some((id) => products.get(id).ageRestricted);

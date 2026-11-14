@@ -308,10 +308,30 @@ async function verifyTurnstile(env: Env, token: unknown, ip: string): Promise<bo
 
 // ---------- 公開 API ----------
 
-app.get('/api/config', (c) =>
+// Stripe ダッシュボードの「決済手段」で有効になっているもの。取得できなければ null（画面側は既定の一覧を使う）
+const KNOWN_METHODS = ['card', 'apple_pay', 'google_pay', 'link', 'paypay'] as const;
+let methodsCache: { at: number; methods: string[] | null } | null = null;
+async function enabledPaymentMethods(env: Env): Promise<string[] | null> {
+  if (methodsCache && Date.now() - methodsCache.at < 10 * 60_000) return methodsCache.methods;
+  let methods: string[] | null = null;
+  try {
+    type Config = { is_default?: boolean; parent?: string | null } & Record<string, { available?: boolean } | unknown>;
+    const res = await stripe<{ data: Config[] }>(env, 'GET', '/payment_method_configurations?limit=20');
+    const cfg = res.data.find((c) => c.is_default && !c.parent) ?? res.data.find((c) => c.is_default) ?? res.data[0];
+    if (cfg) methods = KNOWN_METHODS.filter((k) => (cfg[k] as { available?: boolean } | undefined)?.available === true);
+    if (methods && methods.length === 0) methods = null; // 想定外の応答なら既定の一覧に任せる
+  } catch (e) {
+    console.error(e);
+  }
+  methodsCache = { at: Date.now(), methods };
+  return methods;
+}
+
+app.get('/api/config', async (c) =>
   c.json({
     publishableKey: c.env.STRIPE_PUBLISHABLE_KEY ?? '',
     turnstileSiteKey: c.env.TURNSTILE_SECRET_KEY ? (c.env.TURNSTILE_SITE_KEY ?? '') : '',
+    paymentMethods: await enabledPaymentMethods(c.env),
   }),
 );
 
