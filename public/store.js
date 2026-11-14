@@ -28,7 +28,7 @@
   const cart = new Map(); // productId -> qty
   const total = () => data.products.reduce((s, p) => s + p.price * (cart.get(p.id) || 0), 0);
 
-  // --- Stripe（Apple Pay / Google Pay のみ） ---
+  // --- Stripe（Apple Pay / Google Pay / Amazon Pay） ---
   let stripe = null, elements = null, paying = false;
 
   function setupPayment(amount) {
@@ -40,12 +40,12 @@
     stripe = Stripe(config.publishableKey, { locale: 'ja' });
     elements = stripe.elements({ mode: 'payment', amount, currency: 'jpy' });
     const ece = elements.create('expressCheckout', {
-      paymentMethods: { applePay: 'always', googlePay: 'always', link: 'never', amazonPay: 'never', paypal: 'never', klarna: 'never' },
+      paymentMethods: { applePay: 'always', googlePay: 'always', link: 'never', amazonPay: 'auto', paypal: 'never', klarna: 'never' },
       buttonHeight: 48,
     });
     ece.on('ready', ({ availablePaymentMethods }) => {
       if (!availablePaymentMethods) {
-        $('pay-note').textContent = 'この端末・ブラウザでは Apple Pay / Google Pay をご利用いただけません。ウォレットにカードを登録のうえ、iPhone は Safari、Android は Chrome でお試しください。';
+        $('pay-note').textContent = 'この端末・ブラウザでは Apple Pay / Google Pay / Amazon Pay をご利用いただけません。ウォレットにカードを登録のうえ、iPhone は Safari、Android は Chrome でお試しください。';
         $('pay-note').hidden = false;
       }
     });
