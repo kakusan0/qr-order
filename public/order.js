@@ -37,6 +37,7 @@
     const showNo = o.status === 'paid' || o.status === 'handed_over';
     $('pickup').hidden = !showNo;
     $('no-label').hidden = !showNo;
+    $('age-law').hidden = !o.ageCheckRequired;
     $('pickup').textContent = o.pickupNo == null ? '…' : String(o.pickupNo).padStart(3, '0');
 
     $('receipt').hidden = o.status === 'pending';

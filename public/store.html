@@ -47,12 +47,14 @@
         <dt>支払方法</dt><dd><span id="methods">クレジットカード（JCB ほか）/ Apple Pay / Google Pay / Link / PayPay</span><span id="methods-note" class="note" hidden></span></dd>
         <dt>支払時期</dt><dd>「支払う」を押し、認証・承認が完了した時点で決済が確定します</dd>
         <dt>引渡時期</dt><dd>お客様が店頭でお取りになった商品を、決済完了と同時にお引き渡しします</dd>
+        <dt>申込期間</dt><dd>期間の定めはありません（ご来店中にお支払いください）</dd>
         <dt>キャンセル</dt><dd>決済後のお客様都合によるキャンセル・返品はできません。商品不良・誤りの場合は店頭で返金または交換します</dd>
       </dl>
-      <label class="mail-box">購入完了メールの送付先（任意）<input id="receipt-email" type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="例: name@example.com"><span class="note">入力すると、受取番号とご利用明細をメールでお送りします。送信後、メールアドレスは保存しません。</span></label>
-      <label id="age-box" class="age-box" hidden><input id="age-ok" type="checkbox"><span>年齢確認が必要な商品が含まれています。<strong>私は 20 歳以上です。</strong>お支払い後に店舗スタッフが年齢を確認します。確認できない場合は販売できません（代金は返金します）。</span></label>
+      <label class="mail-box">購入完了メールの送付先（任意）<input id="receipt-email" type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="例: name@example.com"><span class="note">入力すると、注文番号とご利用明細をメールでお送りします。メールアドレスはこの送信にのみ使い、送信後は保存しません（<a href="/legal/privacy" target="_blank" rel="noopener">プライバシーポリシー</a>）。</span></label>
+      <label id="age-box" class="age-box" hidden><input id="age-ok" type="checkbox"><span><strong class="law">20 歳未満の者の飲酒・喫煙は法律で禁止されています。20 歳未満の方には酒類・たばこを販売しません。</strong>年齢確認が必要な商品が含まれています。<strong>私は 20 歳以上です。</strong>お支払い後に店舗スタッフが年齢を確認します。確認できない場合は販売できません（代金は返金します）。</span></label>
       <div id="turnstile"></div>
       <div id="pay"></div>
+      <p id="agree" class="note agree" hidden>下の「支払う」ボタンを押すと、上記の内容でご注文が確定し、お支払いが行われます。押す前に内容をご確認ください。ボタンを押した時点で、<a href="/legal/terms" target="_blank" rel="noopener">利用規約</a>と<a href="/legal/privacy" target="_blank" rel="noopener">プライバシーポリシー</a>に同意したものとします。販売事業者・返品などの条件は<a href="/legal/tokushoho" target="_blank" rel="noopener">特定商取引法に基づく表記</a>をご覧ください。</p>
       <button id="pay-button" class="primary wide" hidden>支払う</button>
       <p id="pay-note" class="note" hidden></p>
     </div>

@@ -309,7 +309,7 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
       '',
       'お支払いが完了しました。購入の内容は、下記のページでも確認できます。',
       ...(order.origin ? [`${order.origin}/order/${order.id}`] : []),
-      ...(order.age_check_required ? ['', '年齢確認が必要な商品が含まれています。店舗スタッフに年齢の確認を受けてください。'] : []),
+      ...(order.age_check_required ? ['', '年齢確認が必要な商品が含まれています。店舗スタッフに年齢の確認を受けてください。', '20 歳未満の者の飲酒・喫煙は法律で禁止されています。'] : []),
       '',
       '--- ご利用明細 ---',
       `店舗: ${store!.name}`,
@@ -323,6 +323,7 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
       ...taxSummary(items).map((t) => `${t.rate}%対象 ${yen(t.subtotal)}（内消費税 ${yen(t.tax)}）`),
       ...(items.some((i) => i.tax_rate === 8) ? ['※は軽減税率（8%）対象商品です。'] : []),
       '',
+      ...(order.origin ? ['商品の不良・誤りなどのお問い合わせ先、返品の条件は、下記の「特定商取引法に基づく表記」をご覧ください。', `${order.origin}/legal/tokushoho`, ''] : []),
       'このメールは、ご購入時に入力されたメールアドレスへ自動で送信しています。',
       'お心当たりがない場合は、このメールを破棄してください。',
     ];
