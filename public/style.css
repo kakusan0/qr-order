@@ -109,6 +109,8 @@ dl.terms dd { margin: 0; }
 .ticket.paid .state, .ticket.paid .note, .ticket.paid .clock { color: var(--on-brand); }
 .ticket.paid .note { opacity: .92; }
 .ticket.refunded .state, .ticket.pending .state { color: var(--warn); }
+/* 年齢確認待ち：支払いは済んでいるが、スタッフの確認が必要 */
+.ticket.paid.age-wait { background: linear-gradient(145deg, #8f3a16, #b4541f); box-shadow: 0 6px 18px rgba(143, 58, 22, .3); }
 .clock { font-variant-numeric: tabular-nums; color: var(--muted); font-size: .875rem; }
 
 /* スタッフ：注文カード */

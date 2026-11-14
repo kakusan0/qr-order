@@ -83,7 +83,7 @@
 
 <div class="layout">
   <nav class="tabs" role="tablist" aria-label="メニュー">
-    <button role="tab" data-tab="orders" aria-selected="true">受け渡し<span id="count" class="badge" hidden>0</span></button>
+    <button role="tab" data-tab="orders" aria-selected="true">注文<span id="count" class="badge" hidden>0</span></button>
     <button role="tab" data-tab="products" aria-selected="false">商品</button>
     <button role="tab" data-tab="qr" aria-selected="false">店舗 QR</button>
     <button role="tab" data-tab="accounts" aria-selected="false" data-admin hidden>スタッフ</button>
@@ -93,12 +93,15 @@
   <main class="content">
     <p id="error" class="error" hidden></p>
 
-    <!-- 受け渡し -->
+    <!-- 注文 -->
     <section data-panel="orders">
-      <h2>支払済・未受け渡し</h2>
-      <p class="note">ここに「支払済」と出ている注文だけ商品をお渡しください。お客様の画面の受取番号と照合し、渡したら「受け渡し完了」を押します。受取番号は毎日 1 から始まります。</p>
-      <div id="paid" class="grid"></div>
-      <h2>最近の履歴</h2>
+      <div id="age-section" hidden>
+        <h2>年齢確認が必要な注文</h2>
+        <p class="note">年齢確認商品を含む注文です。お客様の年齢を身分証などで確認してから「年齢を確認した」を押してください。確認できない場合は返金してください。</p>
+        <div id="paid" class="grid"></div>
+      </div>
+      <h2>支払いが済んだ注文</h2>
+      <p class="note">お支払いが完了した注文の一覧です（新しい順）。商品の受け渡し操作はありません。注文番号は毎日 1 から始まります。</p>
       <div id="done" class="grid"></div>
     </section>
 
@@ -167,7 +170,7 @@
             <label>メールアドレス<input id="a-email" type="email" required autocomplete="off" autocapitalize="none" spellcheck="false"></label>
             <label>権限
               <select id="a-role">
-                <option value="staff">スタッフ（受け渡し・年齢確認・商品の有効/無効）</option>
+                <option value="staff">スタッフ（注文の確認・年齢確認・商品の有効/無効）</option>
                 <option value="admin">管理者（上記に加え、返金・商品の登録/編集/削除・スタッフ管理）</option>
               </select>
             </label>
@@ -281,12 +284,13 @@ function showTab(name) {
 }
 for (const b of document.querySelectorAll('.tabs [data-tab]')) b.onclick = () => showTab(b.dataset.tab);
 
-// ---------- 受け渡し ----------
+// ---------- 注文 ----------
 function orderCard(o) {
-  const c = el('div', 'order ' + o.status);
+  const needsAge = o.ageCheckRequired && !o.ageCheckedAt && o.status !== 'refunded';
+  const c = el('div', 'order' + (needsAge ? ' paid' : ''));
   const head = el('div', 'order-head');
   head.append(el('span', 'pickup', no(o.pickupNo)));
-  const label = { paid: '支払済 ' + time(o.paidAt), handed_over: '受け渡し済 ' + time(o.handedOverAt), refunded: '返金済 ' + time(o.refundedAt) }[o.status];
+  const label = o.status === 'refunded' ? '返金済 ' + time(o.refundedAt) : '支払済 ' + time(o.paidAt);
   head.append(el('span', 'status', label), el('span', 'total', yen(o.total)));
   c.append(head);
 
@@ -297,30 +301,22 @@ function orderCard(o) {
   const meta = [];
   if (o.refundedAmount > 0 && o.status !== 'refunded') meta.push('一部返金済 ' + yen(o.refundedAmount));
   if (o.status === 'refunded') meta.push('返金額 ' + yen(o.refundedAmount));
-  if (o.handedOverBy) meta.push('受け渡し: ' + o.handedOverBy);
   if (o.ageCheckedBy) meta.push('年齢確認: ' + o.ageCheckedBy);
   if (meta.length) c.append(el('p', 'meta', meta.join(' / ')));
 
-  const needsAge = o.ageCheckRequired && !o.ageCheckedAt;
-  if (o.ageCheckRequired && o.status === 'paid') {
+  if (o.ageCheckRequired && o.status !== 'refunded') {
     const p = el('p');
     p.append(el('span', 'tag' + (needsAge ? '' : ' ok'), needsAge ? '年齢確認が必要です' : '年齢確認済み'));
     c.append(p);
   }
 
   const actions = el('div', 'actions');
-  if (o.status === 'paid' && needsAge) {
+  if (needsAge) {
     const a = el('button', 'primary', '年齢を確認した');
     a.onclick = () => {
       if (confirm('身分証などで、お客様が 20 歳以上であることを確認しましたか？')) act(a, '/api/staff/orders/' + o.id + '/age-check');
     };
     actions.append(a);
-  }
-  if (o.status === 'paid') {
-    const b = el('button', needsAge ? '' : 'primary', '受け渡し完了');
-    b.disabled = needsAge;
-    b.onclick = () => act(b, '/api/staff/orders/' + o.id + '/handover');
-    actions.append(b);
   }
   if (isAdmin() && o.status !== 'refunded') {
     const r = el('button', 'ghost', '返金');
@@ -343,7 +339,7 @@ function openRefund(o) {
   refundOrder = o;
   refundRequestId = crypto.randomUUID(); // 二重送信しても 1 回分しか返金されない
   const remaining = o.total - o.refundedAmount;
-  $('refund-title').textContent = '受取番号 ' + no(o.pickupNo) + ' の返金';
+  $('refund-title').textContent = '注文番号 ' + no(o.pickupNo) + ' の返金';
   $('refund-info').textContent = '注文額 ' + yen(o.total) + ' / 返金済 ' + yen(o.refundedAmount) + ' / 返金できる額 ' + yen(remaining);
   $('refund-amount').value = remaining;
   $('refund-dialog').showModal();
@@ -362,13 +358,16 @@ async function refresh() {
   if (!store) return;
   try {
     const { orders } = await api('/api/staff/orders?store=' + encodeURIComponent(store));
-    const paid = orders.filter((o) => o.status === 'paid');
-    const done = orders.filter((o) => o.status !== 'paid');
+    // 年齢確認待ちの注文だけを上に出し、件数をメニューに表示する
+    const isWaiting = (o) => o.ageCheckRequired && !o.ageCheckedAt && o.status !== 'refunded';
+    const paid = orders.filter(isWaiting);
+    const done = orders.filter((o) => !isWaiting(o));
     $('count').textContent = paid.length;
     $('count').hidden = paid.length === 0;
     if ($('refund-dialog').open) return; // 返金の入力中は一覧を描き直さない
-    $('paid').replaceChildren(...(paid.length ? paid.map(orderCard) : [el('p', 'note', '受け渡し待ちの注文はありません。')]));
-    $('done').replaceChildren(...(done.length ? done.map(orderCard) : [el('p', 'note', '履歴はありません。')]));
+    $('age-section').hidden = paid.length === 0;
+    $('paid').replaceChildren(...paid.map(orderCard));
+    $('done').replaceChildren(...(done.length ? done.map(orderCard) : [el('p', 'note', '注文はまだありません。')]));
     $('error').hidden = true;
   } catch (e) {
     $('error').textContent = '注文一覧を取得できません。通信状況を確認してください。';

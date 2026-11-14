@@ -237,7 +237,7 @@ async function verifyStripeSignature(body: string, header: string | undefined, s
 
 // ---------- 注文 ----------
 
-/** 決済成功を確認できた注文だけを「支払済」にし、受取番号を発行する。何度呼ばれても結果は同じ。 */
+/** 決済成功を確認できた注文だけを「支払済」にし、注文番号を発行する。何度呼ばれても結果は同じ。 */
 async function markPaid(env: Env, order: OrderRow, pi: PaymentIntent): Promise<void> {
   if (order.status !== 'pending') return;
   if (
@@ -256,7 +256,7 @@ async function markPaid(env: Env, order: OrderRow, pi: PaymentIntent): Promise<v
     .bind(nowIso(), pi.id, order.id)
     .run();
   if (upd.meta.changes !== 1) return; // 別のリクエストが先に処理済み
-  // 受取番号は日本時間の日付が変わると 1 から振り直す
+  // 注文番号は日本時間の日付が変わると 1 から振り直す
   const row = await env.DB.prepare(
     `UPDATE stores
      SET last_pickup_no = CASE WHEN pickup_date = ?1 THEN last_pickup_no % 999 + 1 ELSE 1 END, pickup_date = ?1
@@ -305,11 +305,11 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
     const lines = [
       `${store!.name} でのご購入ありがとうございます。`,
       '',
-      `受取番号: ${pickup}`,
+      `注文番号: ${pickup}`,
       '',
-      'お支払いが完了しました。下記のページを店舗スタッフにお見せいただき、商品をお受け取りください。',
+      'お支払いが完了しました。購入の内容は、下記のページでも確認できます。',
       ...(order.origin ? [`${order.origin}/order/${order.id}`] : []),
-      ...(order.age_check_required ? ['', '年齢確認が必要な商品が含まれています。年齢を確認できるもの（身分証など）をご用意ください。'] : []),
+      ...(order.age_check_required ? ['', '年齢確認が必要な商品が含まれています。店舗スタッフに年齢の確認を受けてください。'] : []),
       '',
       '--- ご利用明細 ---',
       `店舗: ${store!.name}`,
@@ -326,7 +326,7 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
       'このメールは、ご購入時に入力されたメールアドレスへ自動で送信しています。',
       'お心当たりがない場合は、このメールを破棄してください。',
     ];
-    sent = await sendMail(env, order.receipt_email, `【${store!.name}】ご購入ありがとうございます（受取番号 ${pickup}）`, lines.join('\n'));
+    sent = await sendMail(env, order.receipt_email, `【${store!.name}】ご購入ありがとうございます（注文番号 ${pickup}）`, lines.join('\n'));
   } catch (e) {
     console.error(e);
   }
@@ -912,10 +912,11 @@ app.post('/api/staff/stores/:id/qr-rotation', adminOnly, async (c) => {
 app.get('/api/staff/orders', async (c) => {
   const storeId = c.req.query('store') ?? '';
   const { results: orders } = await c.env.DB.prepare(
-    `SELECT * FROM (SELECT * FROM orders WHERE store_id = ?1 AND status = 'paid' ORDER BY paid_at LIMIT 200)
-     UNION ALL
-     SELECT * FROM (SELECT * FROM orders WHERE store_id = ?1 AND status IN ('handed_over', 'refunded')
-                    ORDER BY COALESCE(handed_over_at, refunded_at) DESC LIMIT 30)`,
+    // 支払いが済んだ注文を新しい順に。年齢確認待ちは古くても必ず含める
+    `SELECT * FROM (SELECT * FROM orders WHERE store_id = ?1 AND status != 'pending' ORDER BY paid_at DESC LIMIT 100)
+     UNION
+     SELECT * FROM orders WHERE store_id = ?1 AND status IN ('paid', 'handed_over') AND age_check_required = 1 AND age_checked_at IS NULL
+     ORDER BY paid_at DESC`,
   )
     .bind(storeId)
     .all<OrderRow>();
@@ -951,30 +952,16 @@ app.get('/api/staff/orders', async (c) => {
   });
 });
 
-// 年齢確認商品を含む注文は、スタッフが年齢を確認した記録がないと受け渡せない
+// 年齢確認商品を含む注文に、スタッフが年齢を確認した記録を付ける
 app.post('/api/staff/orders/:id/age-check', async (c) => {
   const res = await c.env.DB.prepare(
     `UPDATE orders SET age_checked_at = ?, age_checked_by = ?
-     WHERE id = ? AND status = 'paid' AND age_check_required = 1 AND age_checked_at IS NULL`,
+     WHERE id = ? AND status IN ('paid', 'handed_over') AND age_check_required = 1 AND age_checked_at IS NULL`,
   )
     .bind(nowIso(), c.get('session').username, c.req.param('id'))
     .run();
   if (res.meta.changes !== 1) return c.json({ error: 'not_applicable' }, 409);
   return c.json({ ok: true });
-});
-
-app.post('/api/staff/orders/:id/handover', async (c) => {
-  // 支払済の注文だけを1回だけ受け渡し済みにできる（二重受け渡し防止）
-  const res = await c.env.DB.prepare(
-    `UPDATE orders SET status = 'handed_over', handed_over_at = ?, handed_over_by = ?
-     WHERE id = ? AND status = 'paid' AND (age_check_required = 0 OR age_checked_at IS NOT NULL)`,
-  )
-    .bind(nowIso(), c.get('session').username, c.req.param('id'))
-    .run();
-  if (res.meta.changes === 1) return c.json({ ok: true });
-  const order = await getOrder(c.env, c.req.param('id'));
-  if (order?.status === 'paid' && order.age_check_required === 1) return c.json({ error: 'age_check_required' }, 409);
-  return c.json({ error: 'not_paid_or_already_handed_over' }, 409);
 });
 
 // 返金（全額・一部）。管理者のみ

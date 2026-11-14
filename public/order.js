@@ -21,15 +21,22 @@
     if (o.status !== 'pending') { try { localStorage.removeItem('cart:' + o.store.id); } catch { /* 無視 */ } }
     $('ticket').className = 'card ticket ' + o.status;
     const view = {
-      pending: ['お支払いを確認しています…', 'まだ商品はお受け取りいただけません。このままお待ちください。'],
-      paid: ['お支払い完了', 'この画面を店舗スタッフにお見せください。受取番号を照合して商品をお渡しします。'],
-      handed_over: ['お受け取り済み', 'ご利用ありがとうございました。'],
+      pending: ['お支払いを確認しています…', 'まだお支払いは完了していません。このままお待ちください。'],
+      paid: ['お支払い完了', 'ご利用ありがとうございました。この画面が購入の証明になります。'],
+      handed_over: ['お支払い完了', 'ご利用ありがとうございました。この画面が購入の証明になります。'],
       refunded: ['返金済み', 'このご注文は返金されました。'],
     }[o.status];
     $('state').textContent = view[0];
-    $('hint').textContent = view[1] + (o.status === 'paid' && o.ageCheckRequired && !o.ageChecked ? ' 年齢確認が必要な商品が含まれています。年齢を確認できるもの（身分証など）をご用意ください。' : '');
+    const paid = o.status === 'paid' || o.status === 'handed_over';
+    const ageWait = paid && o.ageCheckRequired && !o.ageChecked;
+    $('hint').textContent = ageWait
+      ? '年齢確認が必要な商品が含まれています。店舗スタッフにこの画面を見せて、年齢の確認を受けてください。'
+      : view[1] + (paid && o.ageCheckRequired ? ' 年齢確認済みです。' : '');
+    if (ageWait) $('state').textContent = 'お支払い完了・年齢確認待ち';
+    if (paid) $('ticket').className = 'card ticket paid' + (ageWait ? ' age-wait' : '');
     const showNo = o.status === 'paid' || o.status === 'handed_over';
     $('pickup').hidden = !showNo;
+    $('no-label').hidden = !showNo;
     $('pickup').textContent = o.pickupNo == null ? '…' : String(o.pickupNo).padStart(3, '0');
 
     $('receipt').hidden = o.status === 'pending';
@@ -58,7 +65,9 @@
       if (res.ok) {
         const o = await res.json();
         render(o);
-        if (o.status === 'handed_over' || o.status === 'refunded') return;
+        if (o.status === 'refunded') return;
+        // 支払い完了後は、年齢確認や返金の反映だけを見ればよいので間隔をあける
+        if (o.status !== 'pending') next = o.ageCheckRequired && !o.ageChecked ? 4000 : 30000;
         if (o.status === 'pending') {
           next = 2000;
           if (Date.now() - started > 5 * 60 * 1000) {

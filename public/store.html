@@ -18,7 +18,7 @@
 <main>
   <p id="error" class="error" role="alert" hidden></p>
   <p id="gate" class="gate" role="status" hidden>ご注文には、店頭に表示されている QR コードの読み取りが必要です。下の「商品をスキャンする」から店頭の QR コードを読み取ってください。</p>
-  <p id="last-order" hidden><a href="#">直近のご注文（受取番号）を表示する</a></p>
+  <p id="last-order" hidden><a href="#">直近のご注文（購入の証明）を表示する</a></p>
 
   <button id="scan-open" class="primary wide" hidden>商品をスキャンする</button>
 
@@ -45,11 +45,11 @@
       <dl class="terms">
         <dt>支払方法</dt><dd><span id="methods">クレジットカード（JCB ほか）/ Apple Pay / Google Pay / Link / PayPay</span><span id="methods-note" class="note" hidden></span></dd>
         <dt>支払時期</dt><dd>「支払う」を押し、認証・承認が完了した時点で決済が確定します</dd>
-        <dt>引渡時期</dt><dd>決済完了後、この店舗の店頭ですぐにお渡しします</dd>
+        <dt>引渡時期</dt><dd>お客様が店頭でお取りになった商品を、決済完了と同時にお引き渡しします</dd>
         <dt>キャンセル</dt><dd>決済後のお客様都合によるキャンセル・返品はできません。商品不良・誤りの場合は店頭で返金または交換します</dd>
       </dl>
       <label class="mail-box">購入完了メールの送付先（任意）<input id="receipt-email" type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="例: name@example.com"><span class="note">入力すると、受取番号とご利用明細をメールでお送りします。送信後、メールアドレスは保存しません。</span></label>
-      <label id="age-box" class="age-box" hidden><input id="age-ok" type="checkbox"><span>年齢確認が必要な商品が含まれています。<strong>私は 20 歳以上です。</strong>受け取り時にスタッフが年齢を確認し、確認できない場合は商品をお渡しできません（代金は返金します）。</span></label>
+      <label id="age-box" class="age-box" hidden><input id="age-ok" type="checkbox"><span>年齢確認が必要な商品が含まれています。<strong>私は 20 歳以上です。</strong>お支払い後に店舗スタッフが年齢を確認します。確認できない場合は販売できません（代金は返金します）。</span></label>
       <div id="turnstile"></div>
       <div id="pay"></div>
       <button id="pay-button" class="primary wide" hidden>支払う</button>
