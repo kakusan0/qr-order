@@ -7,6 +7,7 @@ import staffHtml from './staff.html';
 import loginHtml from './login.html';
 import setupHtml from './setup.html';
 import displayHtml from './display.html';
+import { receiptHtml } from './mail';
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -335,7 +336,21 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
       'このメールは、ご購入時に入力されたメールアドレスへ自動で送信しています。',
       'お心当たりがない場合は、このメールを破棄してください。',
     ];
-    sent = await sendMail(env, order.receipt_email, `【${store!.name}】ご購入ありがとうございます（注文番号 ${pickup}）`, lines.join('\n'));
+    const html = receiptHtml({
+      storeName: store!.name,
+      invoiceNumber: store!.invoice_number,
+      orderNo: pickup,
+      orderId: order.id,
+      paidAt,
+      total: order.total,
+      items: items.map((i) => ({ name: i.name, qty: i.qty, amount: i.unit_price * i.qty, reduced: i.tax_rate === 8 })),
+      tax: taxSummary(items),
+      ageCheck: order.age_check_required === 1,
+      orderUrl: order.origin ? `${order.origin}/order/${order.id}` : null,
+      contactUrl: order.origin ? `${order.origin}/contact/${encodeURIComponent(order.store_id)}?order=${order.id}` : null,
+      legalUrl: order.origin ? `${order.origin}/legal/tokushoho` : null,
+    });
+    sent = await sendMail(env, order.receipt_email, `【${store!.name}】ご購入ありがとうございます（注文番号 ${pickup}）`, lines.join('\n'), html);
   } catch (e) {
     console.error(e);
   }
@@ -865,7 +880,8 @@ async function takeChallenge(env: Env, id: unknown, kind: string) {
   return row && row.expires_at >= nowIso() ? row : null;
 }
 
-async function sendMail(env: Env, to: string, subject: string, text: string): Promise<boolean> {
+/** メールを送る。html を渡すと、対応するメールソフトではそちらが表示される（text は非対応のソフト用） */
+async function sendMail(env: Env, to: string, subject: string, text: string, html?: string): Promise<boolean> {
   if (!env.RESEND_API_KEY || !env.MAIL_FROM) {
     console.error('mail is not configured (RESEND_API_KEY / MAIL_FROM)');
     return false;
@@ -874,7 +890,7 @@ async function sendMail(env: Env, to: string, subject: string, text: string): Pr
     const res = await fetch(`${env.MAIL_API_BASE || 'https://api.resend.com'}/emails`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: env.MAIL_FROM, to: [to], subject, text }),
+      body: JSON.stringify({ from: env.MAIL_FROM, to: [to], subject, text, ...(html ? { html } : {}) }),
     });
     if (!res.ok) console.error('mail failed', res.status, (await res.text()).slice(0, 300));
     return res.ok;
