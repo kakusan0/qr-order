@@ -1226,6 +1226,7 @@ app.post('/api/staff/stores/:id/location', adminOnly, async (c) => {
     await c.env.DB.prepare(`UPDATE stores SET lat = NULL, lng = NULL, geofence_m = ? WHERE id = ?`).bind(radius, c.req.param('id')).run();
     return c.json({ ok: true });
   }
+  // 地図で選んだ位置（accuracy 0）、または店内で測った現在地（誤差 200m 以内）
   const geo = body?.geo === undefined ? null : parseGeo(body.geo);
   if (body?.geo !== undefined && (!geo || geo.accuracy > 200)) return c.json({ error: 'location_inaccurate' }, 400);
   const res = geo
@@ -1233,6 +1234,44 @@ app.post('/api/staff/stores/:id/location', adminOnly, async (c) => {
     : await c.env.DB.prepare(`UPDATE stores SET geofence_m = ? WHERE id = ?`).bind(radius, c.req.param('id')).run();
   if (res.meta.changes !== 1) return c.json({ error: 'store_not_found' }, 404);
   return c.json({ ok: true });
+});
+
+// 地図アプリの共有用の短いリンク（maps.app.goo.gl など）を展開して、緯度・経度を読み取る（管理者のみ）
+const MAP_HOSTS = /^(maps\.app\.goo\.gl|goo\.gl|maps\.google\.[a-z.]+|www\.google\.[a-z.]+|google\.[a-z.]+|maps\.apple\.com)$/i;
+function latLngFromMapUrl(u: string): { lat: number; lng: number } | null {
+  let s = u;
+  try { s = decodeURIComponent(u); } catch { /* そのまま */ }
+  const num = '(-?\\d{1,3}(?:\\.\\d+)?)';
+  for (const re of [new RegExp('!3d' + num + '!4d' + num), new RegExp('[?&](?:q|query|ll|center)=' + num + '\\s*,\\s*' + num), new RegExp('@' + num + ',' + num)]) {
+    const m = s.match(re);
+    if (m) {
+      const lat = Number(m[1]), lng = Number(m[2]);
+      if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0)) return { lat, lng };
+    }
+  }
+  return null;
+}
+app.get('/api/staff/geo/resolve', adminOnly, async (c) => {
+  let url: URL;
+  try { url = new URL(c.req.query('url') ?? ''); } catch { return c.json({ error: 'bad_url' }, 400); }
+  for (let hop = 0; hop < 6; hop++) {
+    if (url.protocol !== 'https:' || !MAP_HOSTS.test(url.hostname)) return c.json({ error: 'unsupported_host' }, 400);
+    const found = latLngFromMapUrl(url.toString());
+    if (found) return c.json(found);
+    let res: Response;
+    try { res = await fetch(url.toString(), { redirect: 'manual', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; qr-order)' }, signal: AbortSignal.timeout(6000) }); }
+    catch { return c.json({ error: 'fetch_failed' }, 502); }
+    const loc = res.headers.get('Location');
+    if (!loc) {
+      // 転送されない場合は、ページの中に書かれた位置を探す
+      const html = (await res.text()).slice(0, 400_000);
+      const m = html.match(/center=(-?\d{1,3}\.\d+)%2C(-?\d{1,3}\.\d+)/) || html.match(/@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/);
+      if (m) return c.json({ lat: Number(m[1]), lng: Number(m[2]) });
+      return c.json({ error: 'not_found' }, 404);
+    }
+    url = new URL(loc, url);
+  }
+  return c.json({ error: 'not_found' }, 404);
 });
 
 // QR コードの更新間隔（分）。0 で更新しない

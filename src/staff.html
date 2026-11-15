@@ -18,6 +18,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <script src="/pwa.js" defer></script>
 <script src="/passkey.js"></script>
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+<script src="/vendor/leaflet/leaflet.js" defer></script>
+<script src="/geo-parse.js" defer></script>
 <script src="/vendor/zxing.min.js" defer></script>
 <script src="/barcode.js" defer></script>
 <script src="/ocr.js" defer></script>
@@ -61,6 +64,16 @@
   .thumb-btn img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .thumb-kind { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 4px; font-size: .7rem; font-weight: 700; background: rgba(0,0,0,.6); color: #fff; }
   .ret-detail { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .geo-map { height: 340px; border-radius: var(--r-md); border: 1px solid var(--line); overflow: hidden; z-index: 0; }
+  .geo-tools { display: grid; gap: 8px; }
+  .geo-row { display: flex; gap: 8px; }
+  .geo-row input { flex: 1; min-width: 0; }
+  .geo-row button { flex: none; }
+  .geo-results { display: grid; gap: 6px; }
+  .geo-result { text-align: left; font-weight: 400; font-size: .875rem; }
+  .geo-pending { margin: 0; padding: 8px 12px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--warn) 10%, transparent); color: var(--warn); font-weight: 700; font-size: .875rem; }
+  .geo-pin span { display: block; width: 30px; height: 30px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: #0a6b50; border: 3px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .line-code { font-size: 1.6rem; font-weight: 900; letter-spacing: .06em; margin: 4px 0; font-variant-numeric: tabular-nums; }
   .thread { cursor: pointer; text-align: left; width: 100%; font-weight: 400; display: grid; gap: 4px; padding: 14px 16px; border-radius: var(--r-lg); min-height: 0; }
   .thread .head { display: flex; gap: 10px; align-items: baseline; }
@@ -216,15 +229,35 @@
       <p><a id="display-link" href="#" target="_blank" rel="noopener">表示専用の画面を開く（入口のタブレットなどに映す用）</a></p>
 
       <h2>店舗の位置（購入時の位置情報の確認）</h2>
-      <div class="card form narrow">
+      <div class="card form geo-card">
         <p id="geo-store-state" class="note"></p>
+        <div id="geo-map" class="geo-map" data-noswipe aria-label="店舗の位置を選ぶ地図"></div>
+        <p class="note">地図を押す、またはピンを動かして、店舗の入口あたりに合わせてください。円の内側（＋お客様の測位の誤差）でお支払いを受け付けます。</p>
+        <div data-admin hidden class="geo-tools">
+          <form id="geo-search-form" class="geo-row">
+            <label for="geo-search" class="sr">住所や店舗名で探す</label>
+            <input id="geo-search" type="search" placeholder="住所や店舗名で探す（例: 東京都墨田区押上1-1-2）" autocomplete="off">
+            <button type="submit">探す</button>
+          </form>
+          <div id="geo-results" class="geo-results"></div>
+          <form id="geo-paste-form" class="geo-row">
+            <label for="geo-paste" class="sr">地図アプリのリンクや座標</label>
+            <input id="geo-paste" type="text" placeholder="Google マップ・Apple マップのリンク、または「35.7100, 139.8107」" autocomplete="off" inputmode="url">
+            <button type="submit">反映</button>
+          </form>
+          <p class="note">地図アプリで店舗を開き、「共有」→「リンクをコピー」したものを貼り付けられます。</p>
+        </div>
         <label>お支払いを受け付ける範囲（店舗の位置からの距離）
           <select id="geo-radius">
             <option value="50">50m</option><option value="100">100m</option><option value="200">200m</option><option value="300">300m</option><option value="500">500m</option><option value="1000">1km</option>
           </select>
         </label>
-        <div class="actions" data-admin hidden><button id="geo-set" type="button" class="primary">この端末の現在地を店舗の位置にする</button><button id="geo-clear" type="button" class="ghost danger">位置を削除</button></div>
-        <p class="note">店舗の中で、この端末（スマートフォンなど）を使って登録してください。お客様は、お支払いのときに必ず位置情報の確認が必要です。店舗の位置を登録すると、その範囲（＋測位の誤差）の外からはお支払いできなくなります。屋内では GPS の誤差が大きくなるため、範囲は 200m 以上をおすすめします。</p>
+        <p id="geo-pending" class="geo-pending" hidden></p>
+        <div class="actions" data-admin hidden>
+          <button id="geo-save" type="button" class="primary" disabled>この位置で保存</button>
+          <button id="geo-here" type="button">この端末の現在地へ</button>
+          <button id="geo-clear" type="button" class="ghost danger">位置を削除</button>
+        </div>
         <p id="geo-store-error" class="error" hidden></p>
       </div>
 
@@ -397,6 +430,7 @@ function showTab(name, direction) {
   if (name === 'products') loadProducts();
   if (name === 'accounts') loadAccounts();
   if (name === 'chat') loadChat();
+  if (name === 'qr') { initGeoMap(); resetGeoMap(); setTimeout(() => geoMap && geoMap.invalidateSize(), 50); }
   if (name === 'returns') loadReturns();
   if (name === 'me') loadPasskeys();
 }
@@ -1074,45 +1108,116 @@ $('qr-rotation').onchange = async () => {
   reloadQrImages();
 };
 
-// ---------- 店舗の位置 ----------
+// ---------- 店舗の位置（地図で選ぶ） ----------
 const distLabel = (m) => m == null ? '' : m >= 1000 ? '約 ' + (m / 1000).toFixed(1) + 'km' : '約 ' + m + 'm';
+let geoMap = null, geoPin = null, geoCircle = null, geoDraft = null; // geoDraft: 保存前に選んだ位置 { lat, lng }
+const DEFAULT_CENTER = [35.681, 139.767];
+
+function initGeoMap() {
+  if (geoMap || !window.L) return;
+  geoMap = L.map('geo-map', { zoomControl: true }).setView(DEFAULT_CENTER, 16);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors' }).addTo(geoMap);
+  const icon = L.divIcon({ className: 'geo-pin', html: '<span></span>', iconSize: [30, 42], iconAnchor: [15, 40] });
+  geoPin = L.marker(DEFAULT_CENTER, { draggable: isAdmin(), icon, keyboard: true, title: '店舗の位置' });
+  geoCircle = L.circle(DEFAULT_CENTER, { radius: 200, color: '#0a6b50', weight: 2, fillOpacity: 0.12 });
+  geoPin.on('drag', () => geoCircle.setLatLng(geoPin.getLatLng()));
+  geoPin.on('dragend', () => setDraft(geoPin.getLatLng()));
+  if (isAdmin()) geoMap.on('click', (e) => setDraft(e.latlng));
+}
+function placePin(latlng, zoom) {
+  if (!geoMap) return;
+  if (!geoMap.hasLayer(geoPin)) { geoPin.addTo(geoMap); geoCircle.addTo(geoMap); }
+  geoPin.setLatLng(latlng); geoCircle.setLatLng(latlng);
+  geoMap.setView(latlng, zoom || Math.max(geoMap.getZoom(), 16));
+}
+function setDraft(latlng, zoom) {
+  geoDraft = { lat: Number(latlng.lat.toFixed(6)), lng: Number(latlng.lng.toFixed(6)) };
+  placePin([geoDraft.lat, geoDraft.lng], zoom);
+  showStoreGeo();
+}
 function showStoreGeo() {
   const st = storeInfo();
   if (!st) return;
-  $('geo-radius').value = String(st.geofence || 200);
   $('geo-radius').disabled = !isAdmin();
   $('geo-clear').hidden = st.lat == null;
   $('geo-store-state').textContent = st.lat == null
     ? '店舗の位置が未登録です。お客様の位置情報は確認しますが、店舗から離れていてもお支払いできます。'
-    : '登録済みです。店舗から ' + distLabel(st.geofence) + '（＋測位の誤差）の範囲でのみ、お支払いを受け付けます。';
+    : '登録済みです（' + st.lat.toFixed(5) + ', ' + st.lng.toFixed(5) + '）。店舗から ' + distLabel(st.geofence) + '（＋測位の誤差）の範囲でのみ、お支払いを受け付けます。';
+  const radiusChanged = Number($('geo-radius').value) !== (st.geofence || 200);
+  $('geo-pending').hidden = !geoDraft && !radiusChanged;
+  $('geo-pending').textContent = '保存していない変更があります。' + (geoDraft ? '選んだ位置: ' + geoDraft.lat.toFixed(5) + ', ' + geoDraft.lng.toFixed(5) + '。' : '') + '「この位置で保存」を押すと反映されます。';
+  $('geo-save').disabled = !(geoDraft || (st.lat != null && radiusChanged));
+  if (geoCircle) geoCircle.setRadius(Number($('geo-radius').value));
+}
+/** 店舗を切り替えたときなど、保存済みの位置を地図に出す */
+function resetGeoMap() {
+  geoDraft = null;
+  const st = storeInfo();
+  if (st) $('geo-radius').value = String(st.geofence || 200); // 保存済みの範囲に戻す（選んだだけの範囲は消える）
+  if (!geoMap || !st) return showStoreGeo();
+  if (st.lat != null) placePin([st.lat, st.lng], 17);
+  else { if (geoMap.hasLayer(geoPin)) { geoPin.remove(); geoCircle.remove(); } geoMap.setView(DEFAULT_CENTER, 15); }
+  showStoreGeo();
 }
 async function saveStoreGeo(body) {
   $('geo-store-error').hidden = true;
   try {
     await post('/api/staff/stores/' + encodeURIComponent($('store').value) + '/location', { radius: Number($('geo-radius').value), ...body });
     const { stores } = await api('/api/staff/stores'); storeList = stores;
+    resetGeoMap();
   } catch (e) {
-    $('geo-store-error').textContent = e.message === 'location_inaccurate' ? '現在地の誤差が大きすぎます（200m 以内が必要）。窓の近くや店舗の入口で、もう一度お試しください。' : '保存できませんでした（' + e.message + '）。';
+    $('geo-store-error').textContent = '保存できませんでした（' + e.message + '）。';
     $('geo-store-error').hidden = false;
   }
-  showStoreGeo();
 }
-$('geo-set').onclick = async () => {
+$('geo-save').onclick = () => saveStoreGeo(geoDraft ? { geo: { lat: geoDraft.lat, lng: geoDraft.lng, accuracy: 0 } } : {});
+$('geo-clear').onclick = () => { if (confirm('店舗の位置を削除します。お客様がどこからでもお支払いできるようになります。よろしいですか？')) saveStoreGeo({ clear: true }); };
+$('geo-radius').onchange = showStoreGeo;
+$('geo-here').onclick = () => {
   if (!navigator.geolocation) return alert('この端末では位置情報を使えません。');
-  $('geo-set').disabled = true;
+  $('geo-here').disabled = true;
   navigator.geolocation.getCurrentPosition(
-    async (p) => {
-      if (confirm('現在地（誤差 約 ' + Math.round(p.coords.accuracy) + 'm）を店舗の位置として登録します。店舗の中にいますか？')) {
-        await saveStoreGeo({ geo: { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: Math.round(p.coords.accuracy) } });
-      }
-      $('geo-set').disabled = false;
-    },
-    () => { alert('現在地を取得できませんでした。位置情報の利用を許可してください。'); $('geo-set').disabled = false; },
+    (p) => { setDraft({ lat: p.coords.latitude, lng: p.coords.longitude }, 18); $('geo-here').disabled = false; if (p.coords.accuracy > 100) alert('現在地の誤差が約 ' + Math.round(p.coords.accuracy) + 'm あります。地図でピンの位置を確かめてから保存してください。'); },
+    () => { alert('現在地を取得できませんでした。位置情報の利用を許可してください。'); $('geo-here').disabled = false; },
     { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
   );
 };
-$('geo-clear').onclick = () => { if (confirm('店舗の位置を削除します。お客様がどこからでもお支払いできるようになります。よろしいですか？')) saveStoreGeo({ clear: true }); };
-$('geo-radius').onchange = () => saveStoreGeo({});
+// 住所や店舗名で探す（OpenStreetMap の検索を使う）
+$('geo-search-form').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const q = $('geo-search').value.trim();
+  if (!q) return;
+  $('geo-results').replaceChildren(el('p', 'note', '探しています…'));
+  try {
+    const res = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=ja&countrycodes=jp&q=' + encodeURIComponent(q));
+    const list = res.ok ? await res.json() : [];
+    $('geo-results').replaceChildren(...(list.length ? list.map((r) => {
+      const b = el('button', 'geo-result', r.display_name); b.type = 'button';
+      b.onclick = () => { setDraft({ lat: Number(r.lat), lng: Number(r.lon) }, 18); $('geo-results').replaceChildren(); };
+      return b;
+    }) : [el('p', 'note', '見つかりませんでした。地図アプリのリンクを貼り付けるか、地図を押して選んでください。')]));
+  } catch {
+    $('geo-results').replaceChildren(el('p', 'note', '検索できませんでした。地図アプリのリンクを貼り付けるか、地図を押して選んでください。'));
+  }
+};
+// 地図アプリのリンクや座標を貼り付ける
+$('geo-paste-form').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const raw = $('geo-paste').value.trim();
+  if (!raw) return;
+  $('geo-store-error').hidden = true;
+  let p = window.parseLatLng(raw);
+  if (!p && window.isShortMapLink(raw)) {
+    try { p = await api('/api/staff/geo/resolve?url=' + encodeURIComponent(raw)); } catch { p = null; }
+  }
+  if (!p) {
+    $('geo-store-error').textContent = 'リンクや座標から位置を読み取れませんでした。地図アプリで店舗を開いて「共有」→「リンクをコピー」したもの、または「35.7100, 139.8107」の形の座標を貼り付けてください。';
+    $('geo-store-error').hidden = false;
+    return;
+  }
+  setDraft(p, 18);
+  $('geo-paste').value = '';
+};
 
 function setStore() {
   const s = encodeURIComponent($('store').value);
@@ -1120,7 +1225,7 @@ function setStore() {
   $('qr-link').href = '/staff/qr.svg?store=' + s;
   $('display-link').href = '/staff/display?store=' + s;
   showRotation();
-  showStoreGeo();
+  resetGeoMap();
   stopEdit();
   refresh();
   loadProducts();
