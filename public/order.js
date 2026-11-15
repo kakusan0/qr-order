@@ -17,6 +17,8 @@
 
   function render(o) {
     $('store-name').textContent = o.store.name;
+    $('contact-link').href = '/contact/' + encodeURIComponent(o.store.id) + '?order=' + encodeURIComponent(o.id);
+    $('contact-link').hidden = o.status === 'pending';
     // 支払いが済んだらカートを空にする
     if (o.status !== 'pending') { try { localStorage.removeItem('cart:' + o.store.id); } catch { /* 無視 */ } }
     $('ticket').className = 'card ticket ' + o.status;

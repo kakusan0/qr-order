@@ -54,6 +54,16 @@
   dialog { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--card); color: var(--text); padding: 22px; width: min(440px, calc(100% - 32px)); box-shadow: var(--shadow-md); }
   dialog::backdrop { background: rgba(10, 15, 12, .5); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
   dialog h3 { margin: 0 0 12px; font-size: 1.1rem; font-weight: 800; }
+  #chat-dialog { width: min(560px, calc(100% - 24px)); }
+  #chat-dialog .chat-log { max-height: 46vh; overflow-y: auto; padding: 4px; }
+  #chat-dialog textarea { font: inherit; width: 100%; padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--line); background: color-mix(in srgb, var(--text) 3%, var(--card)); color: var(--text); }
+  .line-code { font-size: 1.6rem; font-weight: 900; letter-spacing: .06em; margin: 4px 0; font-variant-numeric: tabular-nums; }
+  .thread { cursor: pointer; text-align: left; width: 100%; font-weight: 400; display: grid; gap: 4px; padding: 14px 16px; border-radius: var(--r-lg); min-height: 0; }
+  .thread .head { display: flex; gap: 10px; align-items: baseline; }
+  .thread .code { font-weight: 900; font-size: 1.1rem; }
+  .thread .when { color: var(--muted); font-size: .8rem; flex: 1; }
+  .thread .last { color: var(--muted); font-size: .9rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .thread.waiting { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn); }
   .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .keypad button { min-height: 56px; font-size: 1.35rem; font-weight: 800; font-variant-numeric: tabular-nums; padding: 0; border-radius: var(--r-md); box-shadow: var(--shadow-sm); }
   .keypad button:active { background: var(--brand-1); color: var(--on-brand); }
@@ -109,6 +119,7 @@
   <nav class="tabs" role="tablist" aria-label="メニュー">
     <button role="tab" data-tab="orders" aria-selected="true">注文<span id="count" class="badge" hidden>0</span></button>
     <button role="tab" data-tab="products" aria-selected="false">商品</button>
+    <button role="tab" data-tab="chat" aria-selected="false">問い合わせ<span id="chat-count" class="badge" hidden>0</span></button>
     <button role="tab" data-tab="qr" aria-selected="false">店舗 QR</button>
     <button role="tab" data-tab="accounts" aria-selected="false" data-admin hidden>スタッフ</button>
     <button role="tab" data-tab="me" aria-selected="false">パスキー</button>
@@ -157,6 +168,30 @@
           <h2>商品一覧 <span id="product-count" class="badge">0</span></h2>
           <p class="note">QR コードを印刷して商品や売り場に貼ってください。お客様が読み取ると、その商品がカートに入ります。「無効」にした商品は読み取ってもカートに入りません。</p>
           <div id="products" class="grid products"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- 問い合わせ -->
+    <section data-panel="chat" hidden>
+      <div class="split">
+        <section>
+          <h2>LINE で受け取る</h2>
+          <div class="card form">
+            <p id="line-state" class="note"></p>
+            <div id="line-code" hidden>
+              <p>LINE 公式アカウントとのトーク（またはスタッフのグループ）で、次のとおり送信してください。</p>
+              <p class="line-code" id="line-code-text"></p>
+              <p class="note">コードは 15 分間有効です。送信したトークが、お問い合わせの通知先になります。</p>
+            </div>
+            <div class="actions" data-admin hidden><button id="line-link" type="button" class="primary">連携コードを発行する</button><button id="line-unlink" type="button" class="ghost danger" hidden>連携を解除</button></div>
+            <p class="note">LINE では、お客様のメッセージを長押しして「リプライ」で返信すると、そのお客様の画面に届きます。先頭に「#番号 」を付けて送る方法でも届きます。</p>
+          </div>
+        </section>
+        <section>
+          <h2>お問い合わせ一覧</h2>
+          <p class="note">新しい順に並びます。押すと、やり取りの確認と返信ができます（LINE を使えないとき用）。90 日たつと自動で消えます。</p>
+          <div id="threads" class="grid"></div>
         </section>
       </div>
     </section>
@@ -231,6 +266,15 @@
   <p id="scan-live" class="scan-live" aria-live="polite">バーコードを探しています…</p>
   <p id="scan-msg" class="note">明るい枠の中だけを読み取ります。バーコード全体が枠に入るように写してください。線が読めないときは、下の数字を枠の中に大きく写すと読み取ります。読み取ると自動で閉じます。</p>
   <div class="actions"><button id="scan-switch" type="button" hidden>カメラを切り替える</button><button id="scan-cancel" type="button" class="ghost">やめる</button></div>
+</dialog>
+
+<dialog id="chat-dialog">
+  <h3 id="chat-title">お問い合わせ</h3>
+  <div id="chat-log" class="chat-log" data-noswipe></div>
+  <form id="chat-form" class="form">
+    <label>返信<textarea id="chat-body" rows="3" maxlength="2000" required></textarea></label>
+    <div class="actions"><button class="primary">返信する</button><button type="button" id="chat-close" class="ghost">閉じる</button></div>
+  </form>
 </dialog>
 
 <dialog id="refund-dialog">
@@ -312,6 +356,7 @@ function showTab(name, direction) {
   try { sessionStorage.setItem('staffTab', name); } catch {}
   if (name === 'products') loadProducts();
   if (name === 'accounts') loadAccounts();
+  if (name === 'chat') loadChat();
   if (name === 'me') loadPasskeys();
 }
 for (const b of document.querySelectorAll('.tabs [data-tab]')) b.onclick = () => showTab(b.dataset.tab);
@@ -540,6 +585,82 @@ $('product-form').onsubmit = async (ev) => {
     $('product-error').hidden = false;
   }
   $('p-submit').disabled = false;
+};
+
+// ---------- お問い合わせ ----------
+let chatThread = null;
+async function loadChat() {
+  const store = $('store').value;
+  if (!store) return;
+  try {
+    const { line, threads } = await api('/api/staff/chat?store=' + encodeURIComponent(store));
+    // 最後の発言がお客様のもの＝返信待ち
+    const waiting = threads.filter((t) => t.lastSender === 'customer').length;
+    $('chat-count').textContent = waiting;
+    $('chat-count').hidden = waiting === 0;
+    $('line-state').textContent = !line.configured
+      ? 'LINE の設定（チャネルアクセストークンとチャネルシークレット）がまだ行われていません。設定されるまでは、下の一覧から確認・返信してください。'
+      : line.linked ? 'LINE と連携済みです。お問い合わせは、連携した LINE のトークに届きます。' : 'LINE とまだ連携していません。連携コードを発行して、LINE のトークで送信してください。';
+    $('line-code').hidden = !line.linkCode;
+    if (line.linkCode) $('line-code-text').textContent = '連携 ' + line.linkCode;
+    $('line-link').disabled = !line.configured;
+    $('line-unlink').hidden = !line.linked;
+    if (document.querySelector('[data-panel="chat"]').hidden) return;
+    $('threads').replaceChildren(...(threads.length ? threads.map((t) => {
+      const b = el('button', 'thread order' + (t.lastSender === 'customer' ? ' waiting' : ''));
+      b.type = 'button';
+      const head = el('div', 'head');
+      head.append(el('span', 'code', '#' + t.code), el('span', 'when', dateTime(t.lastMessageAt) + (t.orderNo ? ' / 注文番号 ' + no(t.orderNo) : '')));
+      if (t.lastSender === 'customer') head.append(el('span', 'tag', '返信待ち'));
+      b.append(head, el('div', 'last', (t.lastSender === 'customer' ? 'お客様: ' : '店舗: ') + (t.lastBody || '')));
+      b.onclick = () => openChat(t);
+      return b;
+    }) : [el('p', 'note', 'お問い合わせはまだありません。')]));
+    if (chatThread && $('chat-dialog').open) renderChat();
+  } catch (e) {
+    $('threads').replaceChildren(el('p', 'error', 'お問い合わせを取得できません。'));
+  }
+}
+async function renderChat() {
+  try {
+    const { messages } = await api('/api/staff/chat/' + encodeURIComponent(chatThread.id));
+    const atBottom = $('chat-log').scrollTop + $('chat-log').clientHeight >= $('chat-log').scrollHeight - 30;
+    $('chat-log').replaceChildren(...messages.map((m) => {
+      const row = el('div', 'chat-msg ' + (m.sender === 'store' ? 'mine' : 'theirs'));
+      row.append(el('div', 'chat-who', m.sender === 'store' ? '店舗' : 'お客様'), el('div', 'chat-bubble', m.body), el('div', 'chat-time', dateTime(m.createdAt)));
+      return row;
+    }));
+    if (atBottom) $('chat-log').scrollTop = $('chat-log').scrollHeight;
+  } catch {}
+}
+function openChat(t) {
+  chatThread = t;
+  $('chat-title').textContent = 'お問い合わせ #' + t.code + (t.orderNo ? '（注文番号 ' + no(t.orderNo) + '）' : '');
+  $('chat-log').replaceChildren();
+  $('chat-dialog').showModal();
+  renderChat().then(() => { $('chat-log').scrollTop = $('chat-log').scrollHeight; });
+}
+$('chat-close').onclick = () => $('chat-dialog').close();
+$('chat-dialog').addEventListener('close', () => { chatThread = null; });
+$('chat-form').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const btn = ev.target.querySelector('button.primary');
+  btn.disabled = true;
+  try { await post('/api/staff/chat/' + encodeURIComponent(chatThread.id), { body: $('chat-body').value }); $('chat-body').value = ''; }
+  catch (e) { alert('返信できませんでした（' + e.message + '）。'); }
+  btn.disabled = false;
+  await renderChat();
+  $('chat-log').scrollTop = $('chat-log').scrollHeight;
+  loadChat();
+};
+$('line-link').onclick = async () => {
+  try { await post('/api/staff/stores/' + encodeURIComponent($('store').value) + '/line-link'); } catch (e) { alert('発行できませんでした（' + e.message + '）。'); }
+  loadChat();
+};
+$('line-unlink').onclick = async () => {
+  if (!confirm('LINE との連携を解除します。お問い合わせが LINE に届かなくなります。よろしいですか？')) return;
+  try { await api('/api/staff/stores/' + encodeURIComponent($('store').value) + '/line-link', { method: 'DELETE' }); } catch (e) { alert('解除できませんでした。'); }
+  loadChat();
 };
 
 // ---------- バーコードの読み取り ----------
@@ -832,6 +953,7 @@ function setStore() {
   stopEdit();
   refresh();
   loadProducts();
+  loadChat();
 }
 
 $('logout').onclick = async () => { try { await post('/api/staff/logout'); } catch {} location.href = '/staff/login'; };
@@ -850,6 +972,8 @@ $('logout').onclick = async () => { try { await post('/api/staff/logout'); } cat
   try { tab = sessionStorage.getItem('staffTab') || 'orders'; } catch {}
   showTab(tab === 'accounts' && !isAdmin() ? 'orders' : tab);
   setInterval(refresh, 3000);
+  loadChat();
+  setInterval(loadChat, 6000); // 返信待ちの件数と一覧を更新する
   setInterval(() => { if (rotateMinutes() > 0) reloadQrImages(); }, 15000);
 })();
 </script>

@@ -37,6 +37,10 @@ type Env = {
   STRIPE_API_BASE?: string;
   TURNSTILE_VERIFY_URL?: string;
   MAIL_API_BASE?: string;
+  /** LINE 公式アカウント（Messaging API）のチャネルアクセストークンとチャネルシークレット。問い合わせチャットを LINE で受けるのに使う */
+  LINE_CHANNEL_ACCESS_TOKEN?: string;
+  LINE_CHANNEL_SECRET?: string;
+  LINE_API_BASE?: string;
   /** Android アプリの署名鍵の SHA-256 フィンガープリント（カンマ区切りで複数可）。設定すると、アプリがサイトを全画面で開ける */
   ANDROID_CERT_SHA256?: string;
   /** Android アプリのパッケージ名（カンマ区切り）。未設定なら android/app/build.gradle.kts の 2 つ */
@@ -584,6 +588,223 @@ app.post('/api/stripe/webhook', async (c) => {
     if (order) await markPaid(c.env, order, pi);
   }
   return c.json({ received: true });
+});
+
+// ---------- お問い合わせチャット（お客様は画面、店舗は LINE） ----------
+
+const CHAT_MAX_LENGTH = 500;
+const CHAT_RETENTION_DAYS = 90;
+const LINK_CODE_MINUTES = 15;
+
+type ThreadRow = { id: string; store_id: string; code: string; token_hash: string; order_id: string | null; created_at: string; last_message_at: string };
+
+const lineEnabled = (env: Env) => !!(env.LINE_CHANNEL_ACCESS_TOKEN && env.LINE_CHANNEL_SECRET);
+
+async function lineApi(env: Env, path: string, body: unknown): Promise<{ ok: boolean; json: { sentMessages?: { id: string }[] } }> {
+  try {
+    const res = await fetch(`${env.LINE_API_BASE || 'https://api.line.me'}${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const json = (await res.json().catch(() => ({}))) as { sentMessages?: { id: string }[] };
+    if (!res.ok) console.error('line api failed', path, res.status, JSON.stringify(json).slice(0, 300));
+    return { ok: res.ok, json };
+  } catch (e) {
+    console.error(e);
+    return { ok: false, json: {} };
+  }
+}
+const lineText = (text: string) => ({ type: 'text', text: text.slice(0, 4900) });
+const lineReply = (env: Env, replyToken: string, text: string) => lineApi(env, '/v2/bot/message/reply', { replyToken, messages: [lineText(text)] });
+
+/** 見分けやすい 4 文字の番号（紛らわしい 0 O 1 I は使わない） */
+function chatCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return [...crypto.getRandomValues(new Uint8Array(4))].map((b) => chars[b % chars.length]).join('');
+}
+
+async function threadForCustomer(c: C): Promise<ThreadRow | null> {
+  const token = c.req.header('X-Chat-Token') ?? '';
+  if (!token) return null;
+  const thread = await c.env.DB.prepare(`SELECT * FROM chat_threads WHERE id = ?`).bind(c.req.param('threadId')).first<ThreadRow>();
+  if (!thread || !timingSafeEqual(enc.encode(hex(await sha256(token))), enc.encode(thread.token_hash))) return null;
+  return thread;
+}
+
+const messageJson = (m: { id: number; sender: string; body: string; created_at: string }) => ({
+  id: m.id,
+  sender: m.sender,
+  body: m.body,
+  createdAt: m.created_at,
+});
+
+// お客様：メッセージを送る（最初の 1 通でやり取りが始まる）
+app.post('/api/stores/:id/chat', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { threadId?: unknown; token?: unknown; orderId?: unknown; body?: unknown } | null;
+  const text = typeof body?.body === 'string' ? body.body.replace(/\r\n?/g, '\n').trim() : '';
+  if (!text || text.length > CHAT_MAX_LENGTH) return c.json({ error: 'bad_request' }, 400);
+  if (!(await rateLimit(c.env, 'chat', clientIp(c), 12, 300))) return c.json({ error: 'too_many_requests' }, 429);
+
+  const store = await c.env.DB.prepare(`SELECT id, name, line_target FROM stores WHERE id = ?`)
+    .bind(c.req.param('id'))
+    .first<{ id: string; name: string; line_target: string | null }>();
+  if (!store) return c.json({ error: 'store_not_found' }, 404);
+
+  const now = nowIso();
+  let thread: ThreadRow | null = null;
+  let token = typeof body?.token === 'string' ? body.token : '';
+  let first = false;
+  if (typeof body?.threadId === 'string' && token) {
+    const row = await c.env.DB.prepare(`SELECT * FROM chat_threads WHERE id = ? AND store_id = ?`).bind(body.threadId, store.id).first<ThreadRow>();
+    if (row && timingSafeEqual(enc.encode(hex(await sha256(token))), enc.encode(row.token_hash))) thread = row;
+  }
+  if (!thread) {
+    // どの注文についてか（この店舗の、支払いが済んだ注文だけを受け付ける）
+    const order =
+      typeof body?.orderId === 'string'
+        ? await c.env.DB.prepare(`SELECT id FROM orders WHERE id = ? AND store_id = ? AND status != 'pending'`).bind(body.orderId, store.id).first<{ id: string }>()
+        : null;
+    token = randomHex(24);
+    thread = { id: crypto.randomUUID(), store_id: store.id, code: chatCode(), token_hash: hex(await sha256(token)), order_id: order?.id ?? null, created_at: now, last_message_at: now };
+    await c.env.DB.prepare(
+      `INSERT INTO chat_threads (id, store_id, code, token_hash, order_id, created_at, last_message_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(thread.id, thread.store_id, thread.code, thread.token_hash, thread.order_id, now, now)
+      .run();
+    first = true;
+  }
+
+  // LINE に知らせる。届かなくてもメッセージは保存し、管理画面から確認・返信できる
+  let lineMessageId: string | null = null;
+  if (lineEnabled(c.env) && store.line_target) {
+    let header = `#${thread.code} お客様より`;
+    if (first) {
+      const order = thread.order_id
+        ? await c.env.DB.prepare(`SELECT pickup_no, total FROM orders WHERE id = ?`).bind(thread.order_id).first<{ pickup_no: number | null; total: number }>()
+        : null;
+      header =
+        `【お問い合わせ #${thread.code}】${store.name}` +
+        (order ? `\n注文番号 ${String(order.pickup_no ?? '').padStart(3, '0')}（${yen(order.total)}）` : '') +
+        `\nこのメッセージに「リプライ」で返信すると、お客様の画面に届きます。`;
+    }
+    const sent = await lineApi(c.env, '/v2/bot/message/push', { to: store.line_target, messages: [lineText(`${header}\n――――――――\n${text}`)] });
+    lineMessageId = sent.json.sentMessages?.[0]?.id ?? null;
+  }
+
+  const row = await c.env.DB.prepare(
+    `INSERT INTO chat_messages (thread_id, sender, body, line_message_id, created_at) VALUES (?, 'customer', ?, ?, ?) RETURNING id, sender, body, created_at`,
+  )
+    .bind(thread.id, text, lineMessageId, now)
+    .first<{ id: number; sender: string; body: string; created_at: string }>();
+  await c.env.DB.prepare(`UPDATE chat_threads SET last_message_at = ? WHERE id = ?`).bind(now, thread.id).run();
+  return c.json({ threadId: thread.id, token, code: thread.code, message: messageJson(row!) }, 201);
+});
+
+// お客様：やり取りを読む（端末が持つ合言葉が必要）
+app.get('/api/chat/:threadId', async (c) => {
+  const thread = await threadForCustomer(c);
+  if (!thread) return c.json({ error: 'not_found' }, 404);
+  const after = Number(c.req.query('after')) || 0;
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, sender, body, created_at FROM chat_messages WHERE thread_id = ? AND id > ? ORDER BY id LIMIT 200`,
+  )
+    .bind(thread.id, after)
+    .all<{ id: number; sender: string; body: string; created_at: string }>();
+  c.header('Cache-Control', 'no-store');
+  return c.json({ code: thread.code, messages: results.map(messageJson) });
+});
+
+/** 店舗からの返信を保存する */
+async function storeReply(env: Env, threadId: string, text: string): Promise<void> {
+  const now = nowIso();
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO chat_messages (thread_id, sender, body, created_at) VALUES (?, 'store', ?, ?)`).bind(threadId, text.slice(0, 2000), now),
+    env.DB.prepare(`UPDATE chat_threads SET last_message_at = ? WHERE id = ?`).bind(now, threadId),
+  ]);
+}
+
+async function verifyLineSignature(body: string, signature: string | undefined, secret: string): Promise<boolean> {
+  if (!signature || !secret) return false;
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(body)));
+  const expected = btoa(String.fromCharCode(...mac));
+  return timingSafeEqual(enc.encode(signature), enc.encode(expected));
+}
+
+type LineEvent = {
+  type: string;
+  replyToken?: string;
+  source?: { type?: string; groupId?: string; roomId?: string; userId?: string };
+  message?: { type?: string; text?: string; quotedMessageId?: string };
+};
+
+// LINE からの通知：店舗スタッフの返信を、お客様のチャットに届ける
+app.post('/api/line/webhook', async (c) => {
+  const raw = await c.req.text();
+  if (!lineEnabled(c.env) || !(await verifyLineSignature(raw, c.req.header('X-Line-Signature'), c.env.LINE_CHANNEL_SECRET!))) {
+    return c.json({ error: 'invalid_signature' }, 400);
+  }
+  const events = ((JSON.parse(raw) as { events?: LineEvent[] }).events ?? []).slice(0, 20);
+  for (const ev of events) {
+    try {
+      if (ev.type !== 'message' || ev.message?.type !== 'text' || !ev.replyToken) continue;
+      const source = ev.source?.groupId ?? ev.source?.roomId ?? ev.source?.userId ?? '';
+      const text = (ev.message.text ?? '').trim();
+      if (!source || !text) continue;
+
+      // 「連携 123456」：管理画面で発行したコードを送ると、このトークが店舗の通知先になる
+      const link = text.match(/^連携[\s　]*([0-9]{6})$/);
+      if (link) {
+        const store = await c.env.DB.prepare(
+          `UPDATE stores SET line_target = ?, line_link_code = NULL, line_link_expires = NULL
+           WHERE line_link_code = ? AND line_link_expires > ? RETURNING name`,
+        )
+          .bind(source, link[1], nowIso())
+          .first<{ name: string }>();
+        await lineReply(c.env, ev.replyToken, store ? `${store.name} のお問い合わせを、このトークで受け取ります。` : '連携コードが違うか、期限が切れています。管理画面でコードを発行し直してください。');
+        continue;
+      }
+
+      const store = await c.env.DB.prepare(`SELECT id FROM stores WHERE line_target = ?`).bind(source).first<{ id: string }>();
+      if (!store) continue; // 連携していないトークの発言には反応しない
+
+      // どの問い合わせへの返信か：①リプライした元のメッセージ ②先頭の #番号 ③直近 30 分で 1 件だけ
+      let thread: ThreadRow | null = null;
+      let reply = text;
+      if (ev.message.quotedMessageId) {
+        thread = await c.env.DB.prepare(
+          `SELECT t.* FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id WHERE m.line_message_id = ? AND t.store_id = ?`,
+        )
+          .bind(ev.message.quotedMessageId, store.id)
+          .first<ThreadRow>();
+      }
+      if (!thread) {
+        const m = text.match(/^[#＃]\s*([A-Za-z0-9]{4})[\s　:：]+([\s\S]+)$/);
+        if (m) {
+          thread = await c.env.DB.prepare(`SELECT * FROM chat_threads WHERE store_id = ? AND code = ? ORDER BY last_message_at DESC LIMIT 1`)
+            .bind(store.id, m[1].toUpperCase())
+            .first<ThreadRow>();
+          if (thread) reply = m[2].trim();
+        }
+      }
+      if (!thread) {
+        const { results } = await c.env.DB.prepare(`SELECT * FROM chat_threads WHERE store_id = ? AND last_message_at > ? ORDER BY last_message_at DESC LIMIT 2`)
+          .bind(store.id, new Date(Date.now() - 30 * 60_000).toISOString())
+          .all<ThreadRow>();
+        if (results.length === 1) thread = results[0];
+      }
+      if (!thread) {
+        await lineReply(c.env, ev.replyToken, 'どのお問い合わせへの返信か分かりませんでした。お客様のメッセージを長押しして「リプライ」で返信するか、先頭に「#番号 」を付けて送ってください（例: #K7QD ありがとうございます）。');
+        continue;
+      }
+      await storeReply(c.env, thread.id, reply);
+      await lineReply(c.env, ev.replyToken, `#${thread.code} のお客様に送信しました。`);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  return c.json({ ok: true });
 });
 
 // ---------- スタッフのログイン（パスキーのみ。初回はメールの確認コード） ----------
@@ -1188,6 +1409,65 @@ app.post('/api/staff/products/:id/availability', async (c) => {
   return c.json({ ok: true });
 });
 
+// ---------- スタッフ：お問い合わせ ----------
+
+app.get('/api/staff/chat', async (c) => {
+  const storeId = c.req.query('store') ?? '';
+  const store = await c.env.DB.prepare(`SELECT line_target, line_link_code, line_link_expires FROM stores WHERE id = ?`)
+    .bind(storeId)
+    .first<{ line_target: string | null; line_link_code: string | null; line_link_expires: string | null }>();
+  if (!store) return c.json({ error: 'store_not_found' }, 404);
+  const { results } = await c.env.DB.prepare(
+    `SELECT t.id, t.code, t.last_message_at AS lastMessageAt, o.pickup_no AS orderNo,
+            (SELECT body FROM chat_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS lastBody,
+            (SELECT sender FROM chat_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS lastSender
+     FROM chat_threads t LEFT JOIN orders o ON o.id = t.order_id
+     WHERE t.store_id = ? ORDER BY t.last_message_at DESC LIMIT 50`,
+  )
+    .bind(storeId)
+    .all();
+  const codeValid = !!store.line_link_code && !!store.line_link_expires && store.line_link_expires > nowIso();
+  c.header('Cache-Control', 'no-store');
+  return c.json({
+    line: { configured: lineEnabled(c.env), linked: !!store.line_target, linkCode: codeValid ? store.line_link_code : null },
+    threads: results,
+  });
+});
+
+app.get('/api/staff/chat/:threadId', async (c) => {
+  const { results } = await c.env.DB.prepare(`SELECT id, sender, body, created_at FROM chat_messages WHERE thread_id = ? ORDER BY id LIMIT 500`)
+    .bind(c.req.param('threadId'))
+    .all<{ id: number; sender: string; body: string; created_at: string }>();
+  c.header('Cache-Control', 'no-store');
+  return c.json({ messages: results.map(messageJson) });
+});
+
+// 管理画面からも返信できる（LINE を使えないとき用）
+app.post('/api/staff/chat/:threadId', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { body?: unknown } | null;
+  const text = typeof body?.body === 'string' ? body.body.trim() : '';
+  if (!text || text.length > 2000) return c.json({ error: 'bad_request' }, 400);
+  const thread = await c.env.DB.prepare(`SELECT id FROM chat_threads WHERE id = ?`).bind(c.req.param('threadId')).first();
+  if (!thread) return c.json({ error: 'not_found' }, 404);
+  await storeReply(c.env, c.req.param('threadId'), text);
+  return c.json({ ok: true });
+});
+
+// LINE との連携コードを発行する（LINE のトークで「連携 123456」と送ると通知先になる）
+app.post('/api/staff/stores/:id/line-link', adminOnly, async (c) => {
+  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, '0');
+  const res = await c.env.DB.prepare(`UPDATE stores SET line_link_code = ?, line_link_expires = ? WHERE id = ?`)
+    .bind(code, new Date(Date.now() + LINK_CODE_MINUTES * 60_000).toISOString(), c.req.param('id'))
+    .run();
+  if (res.meta.changes !== 1) return c.json({ error: 'store_not_found' }, 404);
+  return c.json({ code, minutes: LINK_CODE_MINUTES });
+});
+
+app.delete('/api/staff/stores/:id/line-link', adminOnly, async (c) => {
+  await c.env.DB.prepare(`UPDATE stores SET line_target = NULL, line_link_code = NULL, line_link_expires = NULL WHERE id = ?`).bind(c.req.param('id')).run();
+  return c.json({ ok: true });
+});
+
 // ---------- スタッフ：自分のパスキー ----------
 
 app.get('/api/staff/passkeys', async (c) => {
@@ -1361,6 +1641,7 @@ app.get('/s/:storeId/manifest.webmanifest', async (c) => {
   );
 });
 app.get('/s/:storeId', page('/store'));
+app.get('/contact/:storeId', page('/contact'));
 app.get('/order/:orderId', page('/order'));
 
 app.all('/api/*', (c) => c.json({ error: 'not_found' }, 404));
@@ -1414,6 +1695,9 @@ async function cleanup(env: Env): Promise<void> {
     env.DB.prepare(`DELETE FROM refunds WHERE order_id IN (SELECT id FROM orders WHERE created_at < ?)`).bind(old),
     env.DB.prepare(`DELETE FROM orders WHERE created_at < ?`).bind(old),
     // 3) 期限切れのログインと回数制限の記録
+    // お問い合わせのやり取りは 90 日で消去する
+    env.DB.prepare(`DELETE FROM chat_messages WHERE thread_id IN (SELECT id FROM chat_threads WHERE last_message_at < ?)`).bind(new Date(Date.now() - CHAT_RETENTION_DAYS * 86400_000).toISOString()),
+    env.DB.prepare(`DELETE FROM chat_threads WHERE last_message_at < ?`).bind(new Date(Date.now() - CHAT_RETENTION_DAYS * 86400_000).toISOString()),
     env.DB.prepare(`DELETE FROM sessions WHERE expires_at < ?`).bind(nowIso()),
     env.DB.prepare(`DELETE FROM webauthn_challenges WHERE expires_at < ?`).bind(nowIso()),
     env.DB.prepare(`DELETE FROM email_codes WHERE expires_at < ?`).bind(nowIso()),

@@ -257,3 +257,19 @@ main > .theme-switch { margin-top: 24px; }
 /* ホーム画面に追加 */
 .install-button { min-height: 36px; padding: 4px 14px; border-radius: 999px; font-size: .8rem; font-weight: 700; margin-left: 8px; }
 footer .install-button { margin: 10px 0 0 8px; }
+
+/* お問い合わせチャット */
+.chat-log { display: grid; gap: 12px; margin: 16px 0; }
+.chat-msg { display: grid; gap: 2px; max-width: 86%; }
+.chat-msg.mine { justify-self: end; justify-items: end; }
+.chat-msg.theirs { justify-self: start; justify-items: start; }
+.chat-who, .chat-time { font-size: .75rem; color: var(--muted); }
+.chat-bubble { padding: 10px 14px; border-radius: 18px; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: var(--shadow-sm); }
+.chat-msg.mine .chat-bubble { background: linear-gradient(135deg, var(--brand-1), var(--brand-2)); color: var(--on-brand); border-bottom-right-radius: 6px; }
+.chat-msg.theirs .chat-bubble { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 6px; }
+.chat-form { display: grid; gap: 8px; margin-top: 20px; padding: 16px; border-radius: var(--r-lg); background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
+.chat-form textarea { font: inherit; width: 100%; padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--line); background: color-mix(in srgb, var(--text) 3%, var(--card)); color: var(--text); resize: vertical; min-height: 84px; }
+.chat-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent); }
+.chat-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.chat-page .bar a { font-size: .875rem; white-space: nowrap; }
+.button-link { display: inline-block; padding: 10px 16px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--card); font-weight: 700; text-decoration: none; }

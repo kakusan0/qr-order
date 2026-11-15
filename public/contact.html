@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>お問い合わせ</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/theme.js"></script>
+<meta name="theme-color" content="#0a6b50" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101311" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/icons/app-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<script src="/contact.js" defer></script>
+</head>
+<body class="chat-page">
+<header class="bar"><h1 id="store-name">お問い合わせ</h1><a id="back" href="/">注文画面へ戻る</a></header>
+<main>
+  <p id="error" class="error" role="alert" hidden></p>
+  <p class="note">店舗のスタッフにメッセージを送れます。返信はこの画面に表示されます。営業時間外や混雑時は、返信に時間がかかることがあります。</p>
+  <p id="order-note" class="note" hidden></p>
+
+  <div id="log" class="chat-log" role="log" aria-live="polite" aria-label="やり取り"></div>
+  <p id="empty" class="note">まだメッセージはありません。下の欄からお送りください。</p>
+
+  <form id="form" class="chat-form">
+    <label for="body" class="note">メッセージ（500 文字まで）</label>
+    <textarea id="body" rows="3" maxlength="500" required placeholder="例: 購入した商品に不良がありました"></textarea>
+    <div class="chat-actions"><span id="count" class="note">0 / 500</span><button class="primary">送信する</button></div>
+    <p class="note">クレジットカード番号・暗証番号・パスワードは書かないでください。送信した内容は、対応のために店舗のスタッフが確認します（<a href="/legal/privacy" target="_blank" rel="noopener">プライバシーポリシー</a>）。この端末でこの画面を開き直すと、やり取りの続きを確認できます。</p>
+  </form>
+</main>
+<footer>
+  <a href="/guide/customer">使い方</a>
+  <a href="/legal/tokushoho">特定商取引法に基づく表記</a>
+  <a href="/legal/terms">利用規約</a>
+  <a href="/legal/privacy">プライバシーポリシー</a>
+</footer>
+</body>
+</html>
