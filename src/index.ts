@@ -37,6 +37,10 @@ type Env = {
   STRIPE_API_BASE?: string;
   TURNSTILE_VERIFY_URL?: string;
   MAIL_API_BASE?: string;
+  /** Android アプリの署名鍵の SHA-256 フィンガープリント（カンマ区切りで複数可）。設定すると、アプリがサイトを全画面で開ける */
+  ANDROID_CERT_SHA256?: string;
+  /** Android アプリのパッケージ名（カンマ区切り）。未設定なら android/app/build.gradle.kts の 2 つ */
+  ANDROID_PACKAGES?: string;
   /** 任意。Yahoo!ショッピング商品検索 API の Client ID。設定するとバーコードから商品名を引ける範囲が広がる */
   YAHOO_CLIENT_ID?: string;
   YAHOO_API_BASE?: string;
@@ -1309,6 +1313,26 @@ app.delete('/api/staff/accounts/:id', adminOnly, async (c) => {
 // ---------- 画面 ----------
 
 const page = (path: string) => (c: C) => c.env.ASSETS.fetch(new Request(new URL(path, c.req.url)));
+// Android アプリとこのサイトが同じ持ち主であることの証明（Digital Asset Links）。
+// 署名鍵のフィンガープリントが一致するアプリだけが、アドレスバーなしでこのサイトを開ける
+app.get('/.well-known/assetlinks.json', (c) => {
+  const fingerprints = (c.env.ANDROID_CERT_SHA256 ?? '')
+    .split(',')
+    .map((f) => f.trim().toUpperCase())
+    .filter((f) => /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(f));
+  const packages = (c.env.ANDROID_PACKAGES || 'dev.workers.gmakihiro.qrorder.staff,dev.workers.gmakihiro.qrorder.customer')
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(p));
+  const statements = fingerprints.length
+    ? packages.map((pkg) => ({
+        relation: ['delegate_permission/common.handle_all_urls'],
+        target: { namespace: 'android_app', package_name: pkg, sha256_cert_fingerprints: fingerprints },
+      }))
+    : [];
+  return c.json(statements, 200, { 'Cache-Control': 'public, max-age=300' });
+});
+
 // お客様用のアプリ情報（店舗ごと）。ホーム画面に追加すると、その店舗の注文画面が開く
 app.get('/s/:storeId/manifest.webmanifest', async (c) => {
   const store = await c.env.DB.prepare(`SELECT id, name FROM stores WHERE id = ?`).bind(c.req.param('storeId')).first<{ id: string; name: string }>();
