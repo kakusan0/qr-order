@@ -1309,6 +1309,33 @@ app.delete('/api/staff/accounts/:id', adminOnly, async (c) => {
 // ---------- 画面 ----------
 
 const page = (path: string) => (c: C) => c.env.ASSETS.fetch(new Request(new URL(path, c.req.url)));
+// お客様用のアプリ情報（店舗ごと）。ホーム画面に追加すると、その店舗の注文画面が開く
+app.get('/s/:storeId/manifest.webmanifest', async (c) => {
+  const store = await c.env.DB.prepare(`SELECT id, name FROM stores WHERE id = ?`).bind(c.req.param('storeId')).first<{ id: string; name: string }>();
+  if (!store) return c.json({ error: 'store_not_found' }, 404);
+  const start = `/s/${encodeURIComponent(store.id)}`;
+  return c.body(
+    JSON.stringify({
+      id: start,
+      name: `${store.name} ご注文`,
+      short_name: store.name.slice(0, 12),
+      description: '商品をスキャンして、その場でお支払い',
+      lang: 'ja',
+      start_url: start,
+      scope: '/',
+      display: 'standalone',
+      background_color: '#f4f5f2',
+      theme_color: '#0a6b50',
+      icons: [
+        { src: '/icons/app-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: '/icons/app-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+        { src: '/icons/app-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      ],
+    }),
+    200,
+    { 'Content-Type': 'application/manifest+json; charset=utf-8', 'Cache-Control': 'no-cache' },
+  );
+});
 app.get('/s/:storeId', page('/store'));
 app.get('/order/:orderId', page('/order'));
 

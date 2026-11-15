@@ -25,6 +25,11 @@
   }
 
   $('store-name').textContent = data.store.name;
+  // ホーム画面に追加したとき、この店舗の注文画面が開くようにする
+  const manifest = document.createElement('link');
+  manifest.rel = 'manifest';
+  manifest.href = '/s/' + encodeURIComponent(storeId) + '/manifest.webmanifest';
+  document.head.append(manifest);
   document.title = data.store.name + ' | ご注文';
   const products = new Map(data.products.map((p) => [p.id, p])); // 販売中（有効）の商品のみ
 

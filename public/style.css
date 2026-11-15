@@ -253,3 +253,7 @@ body.has-cart-bar footer { padding-bottom: 104px; }
 .theme-switch button[aria-pressed="true"] { background: var(--card); color: var(--text); box-shadow: var(--shadow-sm); }
 footer .theme-switch { margin-top: 10px; flex-basis: 100%; width: fit-content; }
 main > .theme-switch { margin-top: 24px; }
+
+/* ホーム画面に追加 */
+.install-button { min-height: 36px; padding: 4px 14px; border-radius: 999px; font-size: .8rem; font-weight: 700; margin-left: 8px; }
+footer .install-button { margin: 10px 0 0 8px; }
