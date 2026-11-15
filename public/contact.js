@@ -9,7 +9,10 @@
   const no = (n) => String(n ?? '').padStart(3, '0');
 
   const storeId = decodeURIComponent(location.pathname.split('/')[2] || '');
-  const urlOrder = new URLSearchParams(location.search).get('order') || '';
+  const params = new URLSearchParams(location.search);
+  const urlOrder = params.get('order') || '';
+  // 返品・交換の画面から開いたときは、その注文についての問い合わせだけにする
+  const onlyOrder = params.get('only') === '1' && !!urlOrder;
   $('back').href = urlOrder ? '/order/' + encodeURIComponent(urlOrder) : '/s/' + encodeURIComponent(storeId);
 
   try {
@@ -25,7 +28,7 @@
   // 注文の一覧：この端末で購入した注文（支払いが済んだ、この店舗の注文のみ）と、リンクで開いた注文
   const select = $('order-select');
   const orders = new Map();
-  const ids = [...new Set([urlOrder, ...(window.rememberedOrders ? window.rememberedOrders(storeId) : [])].filter(Boolean))];
+  const ids = onlyOrder ? [urlOrder] : [...new Set([urlOrder, ...(window.rememberedOrders ? window.rememberedOrders(storeId) : [])].filter(Boolean))];
   await Promise.all(ids.map(async (id) => {
     try {
       const res = await fetch('/api/orders/' + encodeURIComponent(id), { cache: 'no-store' });
@@ -38,6 +41,15 @@
   for (const o of sorted) select.append(new Option('注文番号 ' + no(o.pickupNo) + '　' + time(o.paidAt || o.createdAt) + '　¥' + o.total.toLocaleString('ja-JP'), o.id));
   // 最初は、リンクで開いた注文。なければ、この端末でいちばん新しい注文
   select.value = urlOrder && orders.has(urlOrder) ? urlOrder : sorted.length ? sorted[0].id : '';
+  if (onlyOrder) {
+    if (!orders.has(urlOrder)) return showError('注文が見つかりません。返品・交換の画面から開き直してください。');
+    for (const opt of [...select.options]) if (opt.value !== urlOrder) opt.remove();
+    select.value = urlOrder;
+    select.disabled = true;
+    const note = $('order-pick').querySelector('.note');
+    if (note) note.textContent = '返品・交換をお申し込みの注文についてのお問い合わせです。';
+    $('back').href = '/return/' + encodeURIComponent(urlOrder);
+  }
   $('order-pick').hidden = false;
 
   // 注文に紐づかない問い合わせの合言葉

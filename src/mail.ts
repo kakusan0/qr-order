@@ -146,7 +146,96 @@ ${
 
 <tr><td style="padding:18px 8px 0;font-size:12px;line-height:1.9;color:${MUTED};">
   ${m.legalUrl ? `商品の不良・誤りなどのお問い合わせ先と返品の条件は、<a href="${esc(m.legalUrl)}" style="color:${GREEN};">特定商取引法に基づく表記</a>をご覧ください。<br>` : ''}
-  このメールは、ご購入時に入力されたメールアドレスへ自動で送信しています。お心当たりがない場合は、このメールを破棄してください。メールアドレスは送信後に保存していません。
+  このメールは、ご購入時に入力されたメールアドレスへ自動で送信しています。お心当たりがない場合は、このメールを破棄してください。メールアドレスは、返品・交換の受付をお知らせするため、申込期限まで保存し、その後消去します。
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
+}
+
+export type ReturnAcceptedMail = {
+  storeName: string;
+  code: string;
+  orderNo: string;
+  wanted: string;
+  reason: string;
+  detail: string;
+  items: { name: string; qty: number }[];
+  photoCount: number;
+  statusUrl: string | null;
+  orderUrl: string | null;
+};
+
+/** 返品・交換の受付メール（HTML 版） */
+export function returnAcceptedHtml(m: ReturnAcceptedMail): string {
+  const buttons = [
+    m.statusUrl ? button(m.statusUrl, '申し込みの状況を見る', true) : '',
+    m.orderUrl ? button(m.orderUrl, '購入の証明を開く', false) : '',
+  ].filter(Boolean);
+  return `<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>${esc(m.storeName)} 返品・交換のお申し込みを受け付けました</title>
+</head>
+<body style="margin:0;padding:0;background:${GROUND};font-family:${FONT};color:${INK};-webkit-text-size-adjust:100%;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">受付番号 ${esc(m.code)}・注文番号 ${esc(m.orderNo)}。店舗で内容を確認します。</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${GROUND};">
+<tr><td align="center" style="padding:24px 12px 32px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;">
+
+<tr><td style="padding:0 8px 16px;">
+  <div style="font-size:12px;line-height:1.6;color:${MUTED};letter-spacing:0.04em;">返品・交換のお申し込み</div>
+  <div style="font-size:22px;line-height:1.4;font-weight:900;color:${INK};">${esc(m.storeName)}</div>
+</td></tr>
+
+<tr><td align="center" style="padding:26px 20px 24px;border-radius:28px;background:${GREEN};color:#ffffff;">
+  <div style="font-size:17px;line-height:1.5;font-weight:900;color:#ffffff;">お申し込みを受け付けました</div>
+  <div style="margin-top:6px;font-size:12px;line-height:1.6;letter-spacing:0.08em;color:#ffffff;">受付番号</div>
+  <div style="font-size:48px;line-height:1.1;font-weight:900;letter-spacing:0.06em;color:#ffffff;">${esc(m.code)}</div>
+  <div style="margin-top:10px;font-size:13px;line-height:1.7;color:#ffffff;">店舗で内容を確認し、結果をお申し込みの画面でお知らせします。<br>商品は捨てずに保管してください。</div>
+</td></tr>
+
+${
+  buttons.length
+    ? `<tr><td style="padding:14px 0 0;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+    ${buttons.join('<td width="10" style="width:10px;font-size:0;line-height:0;">&nbsp;</td>')}
+  </tr></table>
+</td></tr>`
+    : ''
+}
+
+<tr><td style="padding:14px 0 0;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border:1px solid ${LINE};border-radius:20px;">
+  <tr><td style="padding:18px 20px 16px;">
+    <div style="font-size:15px;line-height:1.6;font-weight:700;color:${INK};">お申し込みの内容</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;">
+      ${row('注文番号', esc(m.orderNo))}
+      ${row('ご希望', esc(m.wanted))}
+      ${row('理由', esc(m.reason))}
+      ${m.items.map((i) => row(esc(i.name), `× ${i.qty}`)).join('')}
+      ${row('写真', `${m.photoCount} 枚`, { small: true })}
+    </table>
+    <div style="margin-top:10px;padding:12px 14px;border-radius:14px;background:${GROUND};font-size:13px;line-height:1.8;color:${INK};white-space:pre-wrap;">${esc(m.detail)}</div>
+  </td></tr>
+  </table>
+</td></tr>
+
+<tr><td style="padding:14px 0 0;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fbf1ec;border:1px solid #e6c3b3;border-radius:20px;"><tr>
+    <td style="padding:14px 18px;font-size:13px;line-height:1.8;color:#6b2a10;font-weight:700;">先にお送りした購入完了メールのリンクは使えなくなりました。今後はこのメールのリンクをお使いください。</td>
+  </tr></table>
+</td></tr>
+
+<tr><td style="padding:18px 8px 0;font-size:12px;line-height:1.9;color:${MUTED};">
+  このメールは、ご購入時に入力されたメールアドレスへ自動で送信しています。お心当たりがない場合は、このメールを破棄してください。
 </td></tr>
 
 </table>

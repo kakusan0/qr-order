@@ -9,6 +9,8 @@
 
   const orderId = decodeURIComponent(location.pathname.split('/')[2] || '');
   $('back').href = '/order/' + encodeURIComponent(orderId);
+  // メールのリンクに付く合言葉。返品・交換を受け付けると新しくなり、それより前のメールのリンクは使えなくなる
+  let mailKey = new URLSearchParams(location.search).get('m');
 
   const MAX_PHOTOS = 5, MIN_PHOTOS = 2;
   // 写真の欄。種類ごとに用途を示す（whole は必須）
@@ -27,15 +29,18 @@
 
   let data;
   async function load() {
-    const res = await fetch('/api/orders/' + encodeURIComponent(orderId) + '/returns', { cache: 'no-store' });
+    const res = await fetch('/api/orders/' + encodeURIComponent(orderId) + '/returns' + (mailKey ? '?m=' + encodeURIComponent(mailKey) : ''), { cache: 'no-store' });
     if (!res.ok) throw new Error(String(res.status));
     data = await res.json();
   }
-  try { await load(); } catch { return showError('注文が見つかりません。メールのボタン、または購入の証明の画面から開き直してください。'); }
+  try { await load(); } catch (e) {
+    if (e.message === '410') return showError('このメールのリンクは使えません。返品・交換のお申し込みを受け付けたため、購入完了メールのリンクは無効になりました。後からお送りした「返品・交換のお申し込みを受け付けました」のメールのリンクから開いてください。');
+    return showError('注文が見つかりません。メールのボタン、または購入の証明の画面から開き直してください。');
+  }
 
   $('store-name').textContent = data.store.name + ' 返品・交換';
   document.title = data.store.name + ' | 返品・交換のお申し込み';
-  $('contact-link').href = '/contact/' + encodeURIComponent(data.store.id) + '?order=' + encodeURIComponent(orderId);
+  $('contact-link').href = '/contact/' + encodeURIComponent(data.store.id) + '?order=' + encodeURIComponent(orderId) + '&only=1';
   $('sum-no').textContent = String(data.orderNo ?? '').padStart(3, '0');
   $('sum-total').textContent = yen(data.total);
   $('sum-deadline').textContent = day(data.deadline) + ' まで（お支払いから ' + data.windowDays + ' 日以内）';
@@ -130,7 +135,8 @@
     c.width = Math.round(w * scale); c.height = Math.round(h * scale);
     const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(src, 0, 0, c.width, c.height);
     let blob;
-    for (const q of [0.82, 0.7, 0.58, 0.46]) { blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', q)); if (blob.size <= 480_000) break; }
+    for (const q of [0.8, 0.68, 0.56, 0.44, 0.34]) { blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', q)); if (blob && blob.size <= 360_000) break; }
+    if (!blob) throw new Error('encode');
     const b64 = await new Promise((resolve, reject) => { const fr = new FileReader(); fr.onload = () => resolve(String(fr.result).split(',')[1]); fr.onerror = reject; fr.readAsDataURL(blob); });
     return { data: b64, url: URL.createObjectURL(blob) };
   }
@@ -200,6 +206,8 @@
     if (picks.size === 0) return showError('返品・交換したい商品にチェックを入れてください。');
     if (!photos.some((p) => p.kind === 'whole')) return showError('「商品の全体」の写真が必要です。');
     if (photos.length < MIN_PHOTOS) return showError('写真は ' + MIN_PHOTOS + ' 枚以上必要です。不具合の箇所やラベルも撮ってください。');
+    const detailLen = $('detail').value.trim().length;
+    if (detailLen < 5) { $('detail').focus(); return showError('「詳しい状況」を 5 文字以上で入力してください（例：袋が破れていて中身がこぼれていた）。'); }
     if (!$('agree').checked) return showError('「ご確認」にチェックを入れてください。');
     $('submit').disabled = true;
     if (!(await checkGeo())) { $('submit').disabled = false; $('geo-box').scrollIntoView({ block: 'center' }); return showError('お申し込みには、位置情報の確認が必要です。「現在地を確認する」の下の案内をご確認ください。'); }
@@ -214,19 +222,29 @@
         }),
       });
       if (!res.ok) {
-        const code = (await res.json().catch(() => ({}))).error;
+        const code = (await res.json().catch(() => ({}))).error || 'http_' + res.status;
         throw new Error(code === 'too_many_requests' ? '申し込みの回数が多すぎます。しばらくしてからお試しください。'
           : code === 'window_closed' ? '申込期限を過ぎています。'
           : code === 'items_unavailable' ? '選んだ商品は、すでに申し込まれています。画面を開き直してください。'
           : code === 'location_required' || code === 'location_inaccurate' ? '現在地を正確に確認できませんでした。端末の位置情報（GPS）をオンにして、もう一度お試しください。'
           : code === 'too_many_open' ? '確認中・対応中の申し込みが多いため、これ以上は受け付けられません。'
-          : '申し込めませんでした。入力内容と写真を確認して、もう一度お試しください。');
+          : code === 'detail_too_short' ? '「詳しい状況」を 5 文字以上で入力してください。'
+          : code === 'detail_too_long' ? '「詳しい状況」は 1000 文字以内で入力してください。'
+          : code === 'photos_required' ? '写真は ' + MIN_PHOTOS + ' 枚以上（「商品の全体」を含めて）必要です。'
+          : code === 'bad_photo' ? '写真を読み込めませんでした。写真を撮り直してから、もう一度お試しください。'
+          : code === 'photo_too_large' ? '写真が大きすぎます。写真を撮り直してから、もう一度お試しください。'
+          : code === 'already_refunded' ? 'この注文はすでに返金済みです。'
+          : code === 'order_not_found' ? '注文が見つかりません。メールのボタン、または購入の証明の画面から開き直してください。'
+          : code === 'mail_revoked' ? 'このメールのリンクは使えません。最新のメールのリンクから開いてください。'
+          : '申し込めませんでした。時間をおいて、もう一度お試しください。（エラー: ' + code + '）');
       }
-      const { code } = await res.json();
+      const { code, mailed } = await res.json();
       for (const p of photos) URL.revokeObjectURL(p.url);
+      // 受付メールを送ったので、この画面を開いたメールのリンクは無効になった。以降は合言葉なしで読む
+      if (mailKey) { mailKey = null; history.replaceState(null, '', location.pathname); }
       await load(); renderHistory();
       $('form').hidden = true;
-      const done = el('div', 'gate'); done.append(el('strong', null, 'お申し込みを受け付けました（#' + code + '）。'), document.createTextNode(' 店舗スタッフが確認します。結果は、この画面を開き直すと上の「お申し込みの状況」に表示されます。'));
+      const done = el('div', 'gate'); done.append(el('strong', null, 'お申し込みを受け付けました（#' + code + '）。'), document.createTextNode(' 店舗スタッフが確認します。結果は、この画面を開き直すと上の「お申し込みの状況」に表示されます。' + (mailed ? '購入完了メールと同じ宛先に、受付のメールをお送りしました（購入完了メールのリンクは使えなくなりました）。' : '')));
       $('history').before(done);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e) {

@@ -7,7 +7,7 @@ import staffHtml from './staff.html';
 import loginHtml from './login.html';
 import setupHtml from './setup.html';
 import displayHtml from './display.html';
-import { receiptHtml } from './mail';
+import { receiptHtml, returnAcceptedHtml } from './mail';
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -74,6 +74,10 @@ type OrderRow = {
   age_checked_by: string | null;
   geo_distance_m: number | null;
   geo_accuracy_m: number | null;
+  receipt_email: string | null;
+  receipt_sent_at: string | null;
+  mail_token: string | null;
+  origin: string | null;
 };
 
 type ItemRow = { order_id: string; name: string; unit_price: number; tax_rate: number; qty: number; age_restricted: number };
@@ -306,14 +310,20 @@ async function markPaid(env: Env, order: OrderRow, pi: PaymentIntent): Promise<v
 
 const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`;
 
+/** メールのリンクに付ける合言葉（推測されない長さの乱数） */
+const mailToken = () => [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+/** 古いメールのリンク（?m= の合言葉が今のものと違う）で開かれたか */
+const staleMailLink = (order: { mail_token: string | null }, m: string | undefined) => !!m && m !== order.mail_token;
+
 /** 購入完了メールを送る。二重送信しないよう先に送信済みの印を付け、失敗したら戻す（1時間ごとの定期処理が再送する） */
 async function sendReceipt(env: Env, orderId: string): Promise<void> {
   const now = nowIso();
   const order = await env.DB.prepare(
-    `UPDATE orders SET receipt_sent_at = ? WHERE id = ? AND status = 'paid' AND receipt_email IS NOT NULL AND receipt_sent_at IS NULL
-     RETURNING id, store_id, total, pickup_no, paid_at, receipt_email, origin, age_check_required`,
+    `UPDATE orders SET receipt_sent_at = ?, mail_token = COALESCE(mail_token, ?) WHERE id = ? AND status = 'paid' AND receipt_email IS NOT NULL AND receipt_sent_at IS NULL
+     RETURNING id, store_id, total, pickup_no, paid_at, receipt_email, origin, age_check_required, mail_token`,
   )
-    .bind(now, orderId)
+    .bind(now, mailToken(), orderId)
     .first<{
       id: string;
       store_id: string;
@@ -323,8 +333,10 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
       receipt_email: string;
       origin: string | null;
       age_check_required: number;
+      mail_token: string;
     }>();
   if (!order) return;
+  const m = `?m=${order.mail_token}`;
 
   let sent = false;
   try {
@@ -344,7 +356,7 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
       `注文番号: ${pickup}`,
       '',
       'お支払いが完了しました。購入の内容は、下記のページでも確認できます。',
-      ...(order.origin ? [`${order.origin}/order/${order.id}`] : []),
+      ...(order.origin ? [`${order.origin}/order/${order.id}${m}`] : []),
       ...(order.age_check_required ? ['', '年齢確認が必要な商品が含まれています。店舗スタッフに年齢の確認を受けてください。', '20 歳未満の者の飲酒・喫煙は法律で禁止されています。'] : []),
       '',
       '--- ご利用明細 ---',
@@ -359,7 +371,7 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
       ...taxSummary(items).map((t) => `${t.rate}%対象 ${yen(t.subtotal)}（内消費税 ${yen(t.tax)}）`),
       ...(items.some((i) => i.tax_rate === 8) ? ['※は軽減税率（8%）対象商品です。'] : []),
       '',
-      ...(order.origin ? [`商品に不良・誤りがあったときは、お支払いから ${returnWindowDays(env)} 日以内に、写真を添えて返品・交換を申し込めます（お客様のご都合による返品はお受けできません）。`, `${order.origin}/return/${order.id}`, '', '返品の条件などは、下記の「特定商取引法に基づく表記」をご覧ください。', `${order.origin}/legal/tokushoho`, ''] : []),
+      ...(order.origin ? [`商品に不良・誤りがあったときは、お支払いから ${returnWindowDays(env)} 日以内に、写真を添えて返品・交換を申し込めます（お客様のご都合による返品はお受けできません）。`, `${order.origin}/return/${order.id}${m}`, '', '返品の条件などは、下記の「特定商取引法に基づく表記」をご覧ください。', `${order.origin}/legal/tokushoho`, ''] : []),
       'このメールは、ご購入時に入力されたメールアドレスへ自動で送信しています。',
       'お心当たりがない場合は、このメールを破棄してください。',
     ];
@@ -373,8 +385,8 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
       items: items.map((i) => ({ name: i.name, qty: i.qty, amount: i.unit_price * i.qty, reduced: i.tax_rate === 8 })),
       tax: taxSummary(items),
       ageCheck: order.age_check_required === 1,
-      orderUrl: order.origin ? `${order.origin}/order/${order.id}` : null,
-      returnUrl: order.origin ? `${order.origin}/return/${order.id}` : null,
+      orderUrl: order.origin ? `${order.origin}/order/${order.id}${m}` : null,
+      returnUrl: order.origin ? `${order.origin}/return/${order.id}${m}` : null,
       returnDays: returnWindowDays(env),
       legalUrl: order.origin ? `${order.origin}/legal/tokushoho` : null,
     });
@@ -382,10 +394,8 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
   } catch (e) {
     console.error(e);
   }
-  if (sent) {
-    // 送り終えたメールアドレスは保持しない
-    await env.DB.prepare(`UPDATE orders SET receipt_email = NULL WHERE id = ?`).bind(order.id).run();
-  } else {
+  // 送れたときは、返品・交換の受付メールを同じ宛先へ送るため、申込期限まで宛先を残す（定期処理が消去する）
+  if (!sent) {
     await env.DB.prepare(`UPDATE orders SET receipt_sent_at = NULL WHERE id = ? AND receipt_sent_at = ?`).bind(order.id, now).run();
   }
 }
@@ -571,9 +581,48 @@ app.post('/api/orders', async (c) => {
   return c.json({ orderId, total, clientSecret: pi.client_secret }, 201);
 });
 
+/** 返品・交換の受付メールを、購入完了メールと同じ宛先へ送る */
+async function sendReturnAccepted(
+  env: Env,
+  order: OrderRow,
+  r: { id: string; code: string; reason: string; wanted: string; detail: string; token: string; storeName: string; photoCount: number; items: { name: string; qty: number }[] },
+  to: string,
+): Promise<boolean> {
+  const pickup = String(order.pickup_no ?? '').padStart(3, '0');
+  const reasonLabel: Record<string, string> = { defect: '商品の不良・破損・汚れ', wrong_item: '注文と違う商品だった', expired: '期限切れ・傷み・異物', other: 'その他' };
+  const m = `?m=${r.token}`;
+  const statusUrl = order.origin ? `${order.origin}/return/${order.id}${m}` : null;
+  const orderUrl = order.origin ? `${order.origin}/order/${order.id}${m}` : null;
+  const lines = [
+    `${r.storeName} です。返品・交換のお申し込みを受け付けました。`,
+    '',
+    `受付番号: ${r.code}`,
+    `注文番号: ${pickup}`,
+    `ご希望: ${r.wanted === 'refund' ? '返金' : '同じ商品との交換'}`,
+    `理由: ${reasonLabel[r.reason] ?? r.reason}`,
+    '対象の商品:',
+    ...r.items.map((i) => `  ${i.name} × ${i.qty}`),
+    `写真: ${r.photoCount} 枚`,
+    '',
+    '店舗で内容を確認し、結果をお申し込みの画面でお知らせします。商品は捨てずに保管してください。',
+    ...(statusUrl ? ['', '申し込みの状況:', statusUrl] : []),
+    ...(orderUrl ? ['', '購入の証明:', orderUrl] : []),
+    '',
+    'このメールをお送りしたため、先にお送りした購入完了メールのリンクは使えなくなりました。今後はこのメールのリンクをお使いください。',
+    '',
+    'このメールは、ご購入時に入力されたメールアドレスへ自動で送信しています。',
+  ];
+  const html = returnAcceptedHtml({
+    storeName: r.storeName, code: r.code, orderNo: pickup, wanted: r.wanted === 'refund' ? '返金' : '同じ商品との交換',
+    reason: reasonLabel[r.reason] ?? r.reason, detail: r.detail, items: r.items, photoCount: r.photoCount, statusUrl, orderUrl,
+  });
+  return sendMail(env, to, `【${r.storeName}】返品・交換のお申し込みを受け付けました（受付番号 ${r.code}）`, lines.join('\n'), html);
+}
+
 app.get('/api/orders/:id', async (c) => {
   let order = await getOrder(c.env, c.req.param('id'));
   if (!order) return c.json({ error: 'order_not_found' }, 404);
+  if (staleMailLink(order, c.req.query('m'))) return c.json({ error: 'mail_revoked', returnId: await latestReturnId(c.env, order.id) }, 410);
 
   // Webhook が遅れている/届かない場合に備え、未払いの間は Stripe に直接確認する
   if (order.status === 'pending' && order.payment_intent_id) {
@@ -1432,6 +1481,7 @@ const returnJson = async (env: Env, r: ReturnRow) => {
 app.get('/api/orders/:id/returns', async (c) => {
   const order = await getOrder(c.env, c.req.param('id'));
   if (!order || order.status === 'pending') return c.json({ error: 'order_not_found' }, 404);
+  if (staleMailLink(order, c.req.query('m'))) return c.json({ error: 'mail_revoked' }, 410);
   const days = returnWindowDays(c.env);
   const deadline = new Date(new Date(order.paid_at ?? order.created_at).getTime() + days * 86400_000);
   const store = await c.env.DB.prepare(`SELECT name FROM stores WHERE id = ?`).bind(order.store_id).first<{ name: string }>();
@@ -1452,7 +1502,21 @@ app.get('/api/orders/:id/returns', async (c) => {
   });
 });
 
-const isJpeg = (b: Uint8Array) => b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+const latestReturnId = async (env: Env, orderId: string) =>
+  (await env.DB.prepare(`SELECT id FROM returns WHERE order_id = ? ORDER BY created_at DESC LIMIT 1`).bind(orderId).first<{ id: string }>())?.id ?? null;
+
+/** base64 の写真が JPEG か（先頭だけを見る。全体を展開すると処理時間の上限を超えることがある） */
+const isJpegBase64 = (b64: string) => b64.startsWith('/9j/');
+/** base64 の長さから元のバイト数を求める */
+const base64Bytes = (b64: string) => Math.floor((b64.length * 3) / 4) - (b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0);
+
+/** base64 を元のバイト列に戻す（スタッフが写真を開くとき用） */
+function fromBase64(b64: string): Uint8Array<ArrayBuffer> {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
 
 // お客様：返品・交換を申し込む
 app.post('/api/orders/:id/returns', async (c) => {
@@ -1472,7 +1536,9 @@ app.post('/api/orders/:id/returns', async (c) => {
   const reason = RETURN_REASONS.find((r) => r === body?.reason);
   const wanted = body?.wanted === 'refund' || body?.wanted === 'exchange' ? body.wanted : null;
   const detail = typeof body?.detail === 'string' ? body.detail.replace(/\r\n?/g, '\n').trim() : '';
-  if (!reason || !wanted || detail.length < 5 || detail.length > 1000 || body?.agree !== true || !Array.isArray(body?.items) || !Array.isArray(body?.photos)) {
+  if (detail.length < 5) return c.json({ error: 'detail_too_short' }, 400);
+  if (detail.length > 1000) return c.json({ error: 'detail_too_long' }, 400);
+  if (!reason || !wanted || body?.agree !== true || !Array.isArray(body?.items) || !Array.isArray(body?.photos)) {
     return c.json({ error: 'bad_request' }, 400);
   }
 
@@ -1491,10 +1557,8 @@ app.post('/api/orders/:id/returns', async (c) => {
   const decoded: { kind: string; data: string }[] = [];
   for (const ph of photos) {
     const kind = RETURN_PHOTO_KINDS.find((k) => k === ph?.kind);
-    if (!kind || typeof ph.data !== 'string' || !/^[A-Za-z0-9+/=]+$/.test(ph.data)) return c.json({ error: 'bad_photo' }, 400);
-    let bytes: Uint8Array;
-    try { bytes = Uint8Array.from(atob(ph.data), (ch) => ch.charCodeAt(0)); } catch { return c.json({ error: 'bad_photo' }, 400); }
-    if (bytes.length > RETURN_PHOTO_MAX_BYTES || !isJpeg(bytes)) return c.json({ error: 'bad_photo' }, 400);
+    if (!kind || typeof ph.data !== 'string' || ph.data.length % 4 !== 0 || !isJpegBase64(ph.data) || !/^[A-Za-z0-9+/]+={0,2}$/.test(ph.data)) return c.json({ error: 'bad_photo' }, 400);
+    if (base64Bytes(ph.data) > RETURN_PHOTO_MAX_BYTES) return c.json({ error: 'photo_too_large' }, 400);
     decoded.push({ kind, data: ph.data });
   }
   if (!decoded.some((p) => p.kind === 'whole')) return c.json({ error: 'photos_required', min: RETURN_MIN_PHOTOS }, 400);
@@ -1506,17 +1570,26 @@ app.post('/api/orders/:id/returns', async (c) => {
   const id = crypto.randomUUID();
   const code = 'R' + chatCode().slice(0, 3);
   const now = nowIso();
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      `INSERT INTO returns (id, order_id, store_id, code, reason, detail, wanted, created_at, geo_distance_m, geo_accuracy_m) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(id, order.id, order.store_id, code, reason, detail, wanted, now, geoDistance(await storeGeo(c.env, order.store_id), geo), Math.round(geo.accuracy)),
-    ...[...chosen].map(([productId, qty]) =>
-      c.env.DB.prepare(`INSERT INTO return_items (return_id, product_id, name, unit_price, qty) VALUES (?, ?, ?, ?, ?)`).bind(
-        id, productId, available.get(productId)!.name, available.get(productId)!.unitPrice, qty,
+  // 購入完了メールを送っていれば、そのメールのリンクを無効にし、新しい合言葉で受付メールを送る
+  const mailTo = order.receipt_email && order.receipt_sent_at ? order.receipt_email : null;
+  const token = mailTo ? mailToken() : null;
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO returns (id, order_id, store_id, code, reason, detail, wanted, created_at, geo_distance_m, geo_accuracy_m) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(id, order.id, order.store_id, code, reason, detail, wanted, now, geoDistance(await storeGeo(c.env, order.store_id), geo), Math.round(geo.accuracy)),
+      ...[...chosen].map(([productId, qty]) =>
+        c.env.DB.prepare(`INSERT INTO return_items (return_id, product_id, name, unit_price, qty) VALUES (?, ?, ?, ?, ?)`).bind(
+          id, productId, available.get(productId)!.name, available.get(productId)!.unitPrice, qty,
+        ),
       ),
-    ),
-    ...decoded.map((p) => c.env.DB.prepare(`INSERT INTO return_photos (return_id, kind, data, created_at) VALUES (?, ?, ?, ?)`).bind(id, p.kind, p.data, now)),
-  ]);
+      ...decoded.map((p) => c.env.DB.prepare(`INSERT INTO return_photos (return_id, kind, data, created_at) VALUES (?, ?, ?, ?)`).bind(id, p.kind, p.data, now)),
+      ...(token ? [c.env.DB.prepare(`UPDATE orders SET mail_token = ? WHERE id = ?`).bind(token, order.id)] : []),
+    ]);
+  } catch (e) {
+    console.error('return save failed', e);
+    return c.json({ error: 'save_failed' }, 500);
+  }
 
   // 店舗の LINE に知らせる（届かなくても申請は保存済み）
   const store = await c.env.DB.prepare(`SELECT name, line_target FROM stores WHERE id = ?`).bind(order.store_id).first<{ name: string; line_target: string | null }>();
@@ -1527,7 +1600,16 @@ app.post('/api/orders/:id/returns', async (c) => {
       messages: [lineText(`【返品・交換の申請 ${code}】${store.name}\n注文番号 ${String(order.pickup_no ?? '').padStart(3, '0')}\n理由: ${labels[reason]}\nご希望: ${wanted === 'refund' ? '返金' : '交換'}\n写真 ${decoded.length} 枚\n管理画面の「返品」で確認してください。`)],
     });
   }
-  return c.json({ id, code }, 201);
+  let mailed = false;
+  if (mailTo && token) {
+    try {
+      mailed = await sendReturnAccepted(c.env, order, { id, code, reason, wanted, detail, token, storeName: store?.name ?? '', photoCount: decoded.length,
+        items: [...chosen].map(([pid, qty]) => ({ name: available.get(pid)!.name, qty })) }, mailTo);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  return c.json({ id, code, mailed }, 201);
 });
 
 // ---------- スタッフ：返品・交換 ----------
@@ -1551,7 +1633,7 @@ app.get('/api/staff/returns', async (c) => {
 app.get('/api/staff/returns/:id/photos/:photoId', async (c) => {
   const row = await c.env.DB.prepare(`SELECT data FROM return_photos WHERE id = ? AND return_id = ?`).bind(c.req.param('photoId'), c.req.param('id')).first<{ data: string }>();
   if (!row) return c.text('not found', 404);
-  return c.body(Uint8Array.from(atob(row.data), (ch) => ch.charCodeAt(0)), 200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=300', 'X-Content-Type-Options': 'nosniff' });
+  return c.body(fromBase64(row.data), 200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=300', 'X-Content-Type-Options': 'nosniff' });
 });
 
 // 承認・却下（管理者のみ）。承認は「返金」か「交換」のどちらで対応するかを決める
@@ -2026,7 +2108,12 @@ async function cleanup(env: Env): Promise<void> {
     .bind(cutoff)
     .all<{ id: string }>();
   for (const o of unsent) await sendReceipt(env, o.id);
-  await env.DB.prepare(`UPDATE orders SET receipt_email = NULL WHERE receipt_email IS NOT NULL AND created_at < ?`).bind(cutoff).run();
+  // 送れなかった宛先は 24 時間で、送れた宛先は返品・交換の申込期限の翌日に消去する
+  await env.DB.prepare(
+    `UPDATE orders SET receipt_email = NULL WHERE receipt_email IS NOT NULL AND ((receipt_sent_at IS NULL AND created_at < ?) OR COALESCE(paid_at, created_at) < ?)`,
+  )
+    .bind(cutoff, new Date(Date.now() - (returnWindowDays(env) + 1) * 86400_000).toISOString())
+    .run();
 
   // 2) 保存期間を過ぎた注文データを削除する（帳簿の保存期間 7 年に余裕を持たせた日数が既定）
   const days = Math.max(Number(env.ORDER_RETENTION_DAYS) || 2922, 30);

@@ -4,6 +4,9 @@
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const dt = (s) => new Date(s).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
   const orderId = location.pathname.split('/')[2] || '';
+  // メールのリンクに付く合言葉（古いメールのリンクを見分けるため）
+  const mailKey = new URLSearchParams(location.search).get('m');
+  const mailQuery = mailKey ? '?m=' + encodeURIComponent(mailKey) : '';
   const started = Date.now();
 
   // スクリーンショットではなく実際の画面であることが分かるよう現在時刻を動かす
@@ -66,7 +69,13 @@
   async function poll() {
     let next = 3000;
     try {
-      const res = await fetch('/api/orders/' + encodeURIComponent(orderId), { cache: 'no-store' });
+      const res = await fetch('/api/orders/' + encodeURIComponent(orderId) + mailQuery, { cache: 'no-store' });
+      if (res.status === 410) {
+        // 返品・交換を受け付けたあと、それより前に送った購入完了メールのリンクで開かれた
+        $('state').textContent = 'このメールのリンクは使えません';
+        $('hint').textContent = '返品・交換のお申し込みを受け付けたため、購入完了メールのリンクは無効になりました。後からお送りした「返品・交換のお申し込みを受け付けました」のメールのリンクから開いてください。';
+        return;
+      }
       if (res.status === 404) {
         $('state').textContent = 'ご注文が見つかりません';
         return;
