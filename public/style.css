@@ -372,6 +372,11 @@ tr.sum td:last-child { font-size: 1.6rem; font-weight: 900; letter-spacing: -.02
 .ret-form { display: grid; gap: 14px; margin-top: 8px; }
 .ret-form fieldset.card { margin: 0; border: 1px solid var(--line); display: grid; gap: 10px; }
 .ret-form legend { font-weight: 800; padding: 0 6px; }
+.req, .opt { display: inline-block; margin-left: 4px; padding: 1px 8px; border-radius: 999px; font-size: .72rem; font-weight: 800; line-height: 1.6; vertical-align: 1px; white-space: nowrap; }
+.req { background: var(--warn); color: var(--card); }
+.req.soft { background: transparent; color: var(--warn); border: 1px solid var(--warn); }
+.opt { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.req-legend { font-size: .85rem; color: var(--muted); margin: 4px 0 12px; }
 .ret-form textarea { font: inherit; width: 100%; padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--line); background: color-mix(in srgb, var(--text) 3%, var(--card)); color: var(--text); resize: vertical; }
 .ret-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent); }
 .radio { display: flex; align-items: center; gap: 10px; min-height: 44px; }

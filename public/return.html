@@ -38,14 +38,16 @@
   <form id="form" class="ret-form" hidden>
     <h2>返品・交換のお申し込み</h2>
     <p class="note">商品の不良・破損、注文と違う商品、期限切れ・傷みなどが対象です。お客様のご都合による返品はお受けできません。内容を確認のうえ、店舗スタッフがご連絡します（この画面に結果が表示されます）。</p>
+    <p class="req-legend"><span class="req">必須</span> は入力が必要な項目、<span class="opt">任意</span> は省略できる項目です。</p>
 
     <fieldset class="card">
-      <legend>1. 対象の商品</legend>
+      <legend>1. 対象の商品 <span class="req">必須</span></legend>
+      <p class="note">返品・交換したい商品にチェックを入れ、数量を選んでください（1 つ以上）。</p>
       <div id="items"></div>
     </fieldset>
 
     <fieldset class="card">
-      <legend>2. 理由</legend>
+      <legend>2. 理由 <span class="req">必須</span></legend>
       <label class="radio"><input type="radio" name="reason" value="defect" checked> 商品の不良・破損・汚れ</label>
       <label class="radio"><input type="radio" name="reason" value="wrong_item"> 注文と違う商品だった</label>
       <label class="radio"><input type="radio" name="reason" value="expired"> 期限切れ・傷み・異物</label>
@@ -53,27 +55,29 @@
     </fieldset>
 
     <fieldset class="card">
-      <legend>3. 状況の説明</legend>
+      <legend>3. 状況の説明 <span class="req">必須</span></legend>
       <label for="detail" class="note">いつ、どのような状態でしたか（5〜1000 文字）</label>
       <textarea id="detail" rows="4" maxlength="1000" required placeholder="例: 開封したところ、容器にひびが入っていて中身が漏れていました。"></textarea>
     </fieldset>
 
     <fieldset class="card">
-      <legend>4. 商品の写真（2〜5 枚）</legend>
+      <legend>4. 商品の写真 <span class="req">必須</span></legend>
+      <p class="note"><strong>2〜5 枚</strong>。「商品の全体」は必ず撮り、ほかの欄から <strong>1 枚以上</strong>追加してください。</p>
       <p id="photo-tips" class="note"></p>
       <div id="slots" class="slots"></div>
       <p class="note">写真は、商品だけが写るように撮ってください。人の顔・住所・カード番号などが写らないようご注意ください。位置情報などの撮影データは、送信前にこの端末で取り除きます。</p>
     </fieldset>
 
     <fieldset class="card">
-      <legend>5. ご希望の対応</legend>
+      <legend>5. ご希望の対応 <span class="req">必須</span></legend>
       <label class="radio"><input type="radio" name="wanted" value="refund" checked> 返金</label>
       <label class="radio"><input type="radio" name="wanted" value="exchange"> 同じ商品との交換</label>
       <p class="note">最終的な対応は、確認のうえ店舗が決めます。</p>
     </fieldset>
 
     <fieldset class="card">
-      <legend>6. ご確認</legend>
+      <legend>6. ご確認 <span class="req">必須</span></legend>
+      <p class="note">「現在地を確認する」と、下のチェックの両方が必要です。</p>
       <div id="geo-box" class="geo-box">
         <p><strong>お申し込みには、現在地（位置情報）の確認が必要です。</strong>不正なお申し込みを防ぐため、お申し込みの時点で店舗からどのくらい離れているかを記録します（場所によって申し込めなくなることはありません）。保存するのは店舗からの距離だけで、位置そのもの（緯度・経度）は保存しません（<a href="/legal/privacy" target="_blank" rel="noopener">プライバシーポリシー</a>）。</p>
         <p id="geo-state" class="geo-state" aria-live="polite">まだ確認していません。</p>

@@ -92,7 +92,12 @@
     $('slots').replaceChildren(...KINDS.map((k) => {
       const mine = photos.filter((p) => p.kind === k.kind);
       const box = el('div', 'slot' + (k.required && !mine.length ? ' need' : ''));
-      box.append(el('div', 'slot-label', k.label + (k.required ? '（必須）' : '')));
+      // 「商品の全体」は必須。ほかの欄は、合わせて 1 枚以上（最低枚数に届くまで）必要
+      const others = photos.filter((p) => p.kind !== 'whole').length;
+      const tag = k.required ? ['req', '必須'] : others >= MIN_PHOTOS - 1 || mine.length ? ['opt', '任意'] : ['req soft', 'どれか 1 枚'];
+      const label = el('div', 'slot-label', k.label + ' ');
+      label.append(el('span', tag[0], tag[1]));
+      box.append(label);
       const thumbs = el('div', 'thumbs');
       for (const p of mine) {
         const t = el('div', 'thumb');
