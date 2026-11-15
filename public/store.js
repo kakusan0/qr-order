@@ -26,6 +26,7 @@
 
   $('store-name').textContent = data.store.name;
   $('contact-link').href = '/contact/' + encodeURIComponent(storeId);
+  $('contact-icon').href = '/contact/' + encodeURIComponent(storeId);
   // ホーム画面に追加したとき、この店舗の注文画面が開くようにする
   const manifest = document.createElement('link');
   manifest.rel = 'manifest';
@@ -120,6 +121,9 @@
     setTimeout(() => { if (justAdded === productId) justAdded = null; }, 2000);
     setQty(productId, 1);
     notice(p.name + '（' + yen(p.price) + '）をカートに入れました');
+    $('scan-last-name').textContent = p.name + ' を追加しました';
+    $('scan-last-price').textContent = yen(p.price);
+    $('scan-last').hidden = false;
     signal('added');
     return true;
   }
@@ -392,6 +396,8 @@
 
     // 画面下に常に出すカートの点数と合計
     const count = [...cart.values()].reduce((a, b) => a + b, 0);
+    $('tab-count').textContent = count;
+    $('tab-count').hidden = !hasItems;
     $('cart-bar').hidden = !hasItems;
     document.body.classList.toggle('has-cart-bar', hasItems);
     $('cart-bar-total').textContent = yen(sum);
@@ -427,8 +433,11 @@
     if (stream) stream.getTracks().forEach((t) => t.stop());
     stream = null;
     video.srcObject = null;
-    $('scanner').hidden = true;
+    $('scanner').classList.remove('on');
+    $('scan-close').hidden = true;
+    $('scan-switch').hidden = true;
     $('scan-open').hidden = false;
+    live('カメラを起動すると、読み取りを始めます。');
   }
 
   function tick() {
@@ -524,8 +533,10 @@
     lastHit = Date.now();
     scanSession++;
     live('コードを探しています…');
-    $('scanner').hidden = false;
+    $('scanner').classList.add('on');
+    $('scan-close').hidden = false;
     $('scan-open').hidden = true;
+    try { localStorage.setItem('scanAuto', '1'); } catch { /* 次回の自動起動ができないだけ */ }
     $('scan-status').textContent = '明るい枠の中だけを読み取ります。QR コードまたはバーコード全体が枠に入るように写してください。';
     video.srcObject = stream;
     await video.play().catch(() => {});
@@ -533,7 +544,57 @@
   }
 
   document.addEventListener('pointerdown', unlockAudio, { once: true });
-  $('cart-bar-go').onclick = () => { if (stream) stopScan(); $('confirm').scrollIntoView({ behavior: 'smooth' }); };
+  // --- スキャンとカートの切り替え（タブ、または左右のフリック） ---
+  let view = 'scan';
+  function setView(next, direction) {
+    if (next === view) return;
+    view = next;
+    const scan = view === 'scan';
+    $('seg').dataset.view = view;
+    $('dots').dataset.view = view;
+    $('tab-scan').setAttribute('aria-pressed', String(scan));
+    $('tab-cart').setAttribute('aria-pressed', String(!scan));
+    for (const [id, show] of [['panel-scan', scan], ['panel-cart', !scan]]) {
+      const panel = $(id);
+      panel.hidden = !show;
+      panel.classList.remove('from-left', 'from-right');
+      if (show && direction) panel.classList.add(direction > 0 ? 'from-right' : 'from-left'); // 動かした向きから入ってくる
+    }
+    if (scan) {
+      // 一度カメラを使った端末では、スキャンに戻ると自動で再開する
+      let auto = false;
+      try { auto = localStorage.getItem('scanAuto') === '1'; } catch { /* 手動で起動してもらう */ }
+      if (auto && !stream) startScan();
+    } else if (stream) {
+      stopScan(); // カートを見ているあいだはカメラを止める
+    }
+  }
+  $('tab-scan').onclick = () => setView('scan', -1);
+  $('tab-cart').onclick = () => setView('cart', 1);
+
+  (() => {
+    const area = $('shop');
+    let x0 = 0, y0 = 0, t0 = 0, tracking = false;
+    area.addEventListener('touchstart', (e) => {
+      tracking = false;
+      if (e.touches.length !== 1 || paying) return;
+      // 文字の入力欄の上から始めた操作は、切り替えに使わない
+      if (e.target.closest('input, select, textarea, [data-noswipe]')) return;
+      x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; t0 = Date.now(); tracking = true;
+    }, { passive: true });
+    area.addEventListener('touchend', (e) => {
+      if (!tracking) return;
+      tracking = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - x0, dy = t.clientY - y0;
+      // 横に 60px 以上、縦の動きの 2 倍以上、0.6 秒以内だけをフリックとみなす
+      if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - t0 > 600) return;
+      if (dx < 0) setView('cart', 1); else setView('scan', -1);
+    }, { passive: true });
+    area.addEventListener('touchcancel', () => { tracking = false; }, { passive: true });
+  })();
+
+  $('cart-bar-go').onclick = () => { setView('cart', 1); $('confirm').scrollIntoView({ behavior: 'smooth' }); };
   $('scan-open').onclick = startScan;
   $('scan-close').onclick = stopScan;
   $('scan-switch').onclick = switchCamera;

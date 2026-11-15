@@ -21,6 +21,7 @@
 <header class="bar"><h1 id="store-name">ご注文状況</h1></header>
 <main>
   <div id="ticket" class="card ticket pending" aria-live="polite">
+    <span id="ticket-icon" class="ticket-icon" hidden><svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
     <div id="state" class="state">お支払いを確認しています…</div>
     <div id="no-label" class="note" hidden>注文番号</div>
     <span id="pickup" class="pickup" hidden></span>
@@ -36,7 +37,7 @@
       <p class="note">※は軽減税率（8%）対象商品です。</p>
       <p id="age-law" class="note" hidden>20 歳未満の者の飲酒・喫煙は法律で禁止されています。</p>
       <p class="note">商品の不良・誤り、二重のお支払いなどのお問い合わせは、<a href="/legal/tokushoho">特定商取引法に基づく表記</a>に記載の連絡先、または店舗スタッフまでお申し出ください。その際、この画面の注文番号と注文 ID をお知らせください。</p>
-      <p><a id="contact-link" class="button-link" href="#" hidden>この注文についてチャットで問い合わせる</a></p>
+      <div class="ticket-actions"><a id="contact-link" class="button-link" href="#" hidden><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>問い合わせる</a><a id="shop-link" class="button-link dark" href="#" hidden>続けて買う</a></div>
     </div>
   </section>
 </main>

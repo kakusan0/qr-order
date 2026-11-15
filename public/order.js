@@ -19,6 +19,9 @@
     $('store-name').textContent = o.store.name;
     $('contact-link').href = '/contact/' + encodeURIComponent(o.store.id) + '?order=' + encodeURIComponent(o.id);
     $('contact-link').hidden = o.status === 'pending';
+    $('shop-link').href = '/s/' + encodeURIComponent(o.store.id);
+    $('shop-link').hidden = o.status === 'pending';
+    $('ticket-icon').hidden = !(o.status === 'paid' || o.status === 'handed_over');
     // 支払いが済んだらカートを空にする
     if (o.status !== 'pending') { try { localStorage.removeItem('cart:' + o.store.id); } catch { /* 無視 */ } }
     $('ticket').className = 'card ticket ' + o.status;

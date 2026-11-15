@@ -34,7 +34,7 @@
   .tabs { display: flex; gap: 6px; overflow-x: auto; padding: 10px 12px; scrollbar-width: none; }
   .tabs::-webkit-scrollbar { display: none; }
   .tabs button { flex: none; border-radius: 999px; border-color: transparent; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--muted); font-weight: 700; white-space: nowrap; }
-  .tabs button[aria-selected="true"] { background: linear-gradient(135deg, var(--brand-1), var(--brand-2)); color: var(--on-brand); box-shadow: var(--shadow-brand); }
+  .tabs button[aria-selected="true"] { background: var(--brand-1); color: var(--on-brand); }
   .tabs .badge { margin-left: 6px; background: #b8431f; color: #fff; }
   .tabs button[aria-selected="true"] .badge { background: #fff; color: var(--brand-1); }
   .content { max-width: none; margin: 0; padding: 8px 16px 64px; }
