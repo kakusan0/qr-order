@@ -28,7 +28,6 @@
     <p id="error" class="error" role="alert" hidden></p>
   </div>
   <p class="note">はじめて使う方、端末を変えた方は <a href="/staff/setup">セットアップ</a> へ。</p>
-  <p class="note"><a href="/guide/staff" target="_blank" rel="noopener">スタッフ用の操作ガイド</a></p>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -47,7 +46,12 @@ $('login').onclick = async () => {
     try { response = await passkey.get(options); }
     catch { return fail('パスキーの確認が完了しませんでした。この端末に登録がない場合は、セットアップを行ってください。'); }
     const res = await post('/api/staff/login/verify', { challengeId, response });
-    if (res.ok) { location.href = '/staff'; return; }
+    if (res.ok) {
+      // ログイン後の戻り先（このサイトの中のページだけ）
+      const next = new URLSearchParams(location.search).get('next') || '';
+      location.href = /^\/(?![\/\\])/.test(next) ? next : '/staff';
+      return;
+    }
     fail('ログインできませんでした。パスキーが無効になっているか、アカウントが停止されています。');
   } catch {
     fail('通信できませんでした。もう一度お試しください。');

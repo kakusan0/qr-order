@@ -7,6 +7,7 @@ import staffHtml from './staff.html';
 import loginHtml from './login.html';
 import setupHtml from './setup.html';
 import displayHtml from './display.html';
+import guideStaffHtml from './guide-staff.html';
 import { receiptHtml, returnAcceptedHtml } from './mail';
 import {
   generateAuthenticationOptions,
@@ -1198,6 +1199,13 @@ app.post('/api/staff/logout', async (c) => {
 
 app.get('/staff/setup', (c) => c.html(setupHtml, 200, { 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' }));
 app.get('/staff/login', (c) => c.html(loginHtml, 200, { 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' }));
+
+// スタッフ用の操作ガイド：管理画面にログインしている人だけに見せる（未ログインならログイン後にここへ戻す）
+app.get('/guide/staff', async (c) => {
+  if (!(await readSession(c))) return c.redirect('/staff/login?next=' + encodeURIComponent('/guide/staff'));
+  return c.html(guideStaffHtml, 200, { 'Cache-Control': 'private, no-store', 'X-Frame-Options': 'DENY', 'X-Robots-Tag': 'noindex' });
+});
+app.get('/guide/staff.html', (c) => c.redirect('/guide/staff', 301));
 
 // 画面：未ログインならログイン画面へ
 app.use('/staff', async (c, next) => {
