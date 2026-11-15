@@ -20,12 +20,11 @@
   <p id="error" class="error" role="alert" hidden></p>
   <p class="note">店舗のスタッフにメッセージを送れます。返信はこの画面に表示されます。営業時間外や混雑時は、返信に時間がかかることがあります。</p>
   <div id="order-pick" class="card order-pick" hidden>
-    <label for="order-select"><strong>どの注文についてですか（任意）</strong></label>
+    <label for="order-select"><strong>どの注文についてですか</strong></label>
     <select id="order-select"><option value="">注文は選ばない（そのほかのお問い合わせ）</option></select>
-    <p class="note">この端末で購入した注文から選べます。選ばなくても送信できます。</p>
+    <p class="note">注文ごとにやり取りがまとまります。購入完了メールや購入の証明の画面から開くと、その注文が選ばれた状態になります。注文に関係しない問い合わせは「注文は選ばない」を選んでください。</p>
   </div>
-  <p id="order-note" class="note" hidden></p>
-  <p id="new-thread" hidden><button id="new-thread-btn" type="button" class="ghost">別の件で、新しく問い合わせる</button></p>
+  <p id="order-note" class="note"></p>
 
   <div id="log" class="chat-log" role="log" aria-live="polite" aria-label="やり取り"></div>
   <p id="empty" class="note">まだメッセージはありません。下の欄からお送りください。</p>

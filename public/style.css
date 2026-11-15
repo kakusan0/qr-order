@@ -400,3 +400,18 @@ tr.sum td:last-child { font-size: 1.6rem; font-weight: 900; letter-spacing: -.02
 .ret-note { padding: 10px 12px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--text) 5%, transparent); }
 .order-pick { display: grid; gap: 8px; }
 .order-pick select { width: 100%; }
+
+/* 返品の写真：画面内のカメラ */
+.add-photo.primary-soft { background: var(--brand-1); color: #fff; border-color: transparent; }
+.cam-dialog { width: min(520px, calc(100% - 16px)); max-height: calc(100% - 16px); padding: 16px; border: 0; border-radius: 24px; background: #0e110f; color: #fff; }
+.cam-dialog::backdrop { background: rgba(0, 0, 0, .7); }
+.cam-dialog h3 { margin: 0 0 10px; font-size: 1rem; }
+.cam-dialog .note { color: #b4bdb6; }
+.cam-frame { border-radius: 18px; overflow: hidden; background: #000; }
+.cam-frame video { display: block; width: 100%; max-height: 62vh; object-fit: cover; }
+.cam-actions { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; margin-top: 12px; }
+.cam-actions .ghost { justify-self: start; color: #fff; border-color: rgba(255, 255, 255, .3); }
+.cam-actions #cam-switch { justify-self: end; width: 48px; min-height: 48px; padding: 0; border-radius: 50%; background: rgba(255, 255, 255, .16); color: #fff; border: 0; display: grid; place-items: center; }
+.cam-shot { width: 72px; min-height: 72px; height: 72px; padding: 0; border-radius: 50%; border: 4px solid #fff !important; background: transparent !important; display: grid; place-items: center; }
+.cam-shot span { width: 54px; height: 54px; border-radius: 50%; background: #fff; }
+.cam-shot:active span { transform: scale(.9); }

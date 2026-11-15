@@ -349,7 +349,6 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
       tax: taxSummary(items),
       ageCheck: order.age_check_required === 1,
       orderUrl: order.origin ? `${order.origin}/order/${order.id}` : null,
-      contactUrl: order.origin ? `${order.origin}/contact/${encodeURIComponent(order.store_id)}?order=${order.id}` : null,
       returnUrl: order.origin ? `${order.origin}/return/${order.id}` : null,
       returnDays: returnWindowDays(env),
       legalUrl: order.origin ? `${order.origin}/legal/tokushoho` : null,
@@ -658,66 +657,104 @@ const messageJson = (m: { id: number; sender: string; body: string; created_at: 
   createdAt: m.created_at,
 });
 
-// お客様：メッセージを送る（最初の 1 通でやり取りが始まる）
-app.post('/api/stores/:id/chat', async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { threadId?: unknown; token?: unknown; orderId?: unknown; body?: unknown } | null;
-  const text = typeof body?.body === 'string' ? body.body.replace(/\r\n?/g, '\n').trim() : '';
-  if (!text || text.length > CHAT_MAX_LENGTH) return c.json({ error: 'bad_request' }, 400);
-  if (!(await rateLimit(c.env, 'chat', clientIp(c), 12, 300))) return c.json({ error: 'too_many_requests' }, 429);
-
-  const store = await c.env.DB.prepare(`SELECT id, name, line_target FROM stores WHERE id = ?`)
-    .bind(c.req.param('id'))
-    .first<{ id: string; name: string; line_target: string | null }>();
-  if (!store) return c.json({ error: 'store_not_found' }, 404);
-
+/** お客様のメッセージを保存し、店舗の LINE に知らせる（届かなくても保存し、管理画面から確認・返信できる） */
+async function addCustomerMessage(
+  env: Env,
+  store: { id: string; name: string; line_target: string | null },
+  thread: ThreadRow,
+  first: boolean,
+  text: string,
+) {
   const now = nowIso();
-  let thread: ThreadRow | null = null;
-  let token = typeof body?.token === 'string' ? body.token : '';
-  let first = false;
-  if (typeof body?.threadId === 'string' && token) {
-    const row = await c.env.DB.prepare(`SELECT * FROM chat_threads WHERE id = ? AND store_id = ?`).bind(body.threadId, store.id).first<ThreadRow>();
-    if (row && timingSafeEqual(enc.encode(hex(await sha256(token))), enc.encode(row.token_hash))) thread = row;
-  }
-  if (!thread) {
-    // どの注文についてか（この店舗の、支払いが済んだ注文だけを受け付ける）
-    const order =
-      typeof body?.orderId === 'string'
-        ? await c.env.DB.prepare(`SELECT id FROM orders WHERE id = ? AND store_id = ? AND status != 'pending'`).bind(body.orderId, store.id).first<{ id: string }>()
-        : null;
-    token = randomHex(24);
-    thread = { id: crypto.randomUUID(), store_id: store.id, code: chatCode(), token_hash: hex(await sha256(token)), order_id: order?.id ?? null, created_at: now, last_message_at: now };
-    await c.env.DB.prepare(
-      `INSERT INTO chat_threads (id, store_id, code, token_hash, order_id, created_at, last_message_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    )
-      .bind(thread.id, thread.store_id, thread.code, thread.token_hash, thread.order_id, now, now)
-      .run();
-    first = true;
-  }
-
-  // LINE に知らせる。届かなくてもメッセージは保存し、管理画面から確認・返信できる
   let lineMessageId: string | null = null;
-  if (lineEnabled(c.env) && store.line_target) {
-    let header = `#${thread.code} お客様より`;
-    if (first) {
-      const order = thread.order_id
-        ? await c.env.DB.prepare(`SELECT pickup_no, total FROM orders WHERE id = ?`).bind(thread.order_id).first<{ pickup_no: number | null; total: number }>()
-        : null;
-      header =
-        `【お問い合わせ #${thread.code}】${store.name}` +
-        (order ? `\n注文番号 ${String(order.pickup_no ?? '').padStart(3, '0')}（${yen(order.total)}）` : '') +
-        `\nこのメッセージに「リプライ」で返信すると、お客様の画面に届きます。`;
-    }
-    const sent = await lineApi(c.env, '/v2/bot/message/push', { to: store.line_target, messages: [lineText(`${header}\n――――――――\n${text}`)] });
+  if (lineEnabled(env) && store.line_target) {
+    const order = thread.order_id
+      ? await env.DB.prepare(`SELECT pickup_no, total FROM orders WHERE id = ?`).bind(thread.order_id).first<{ pickup_no: number | null; total: number }>()
+      : null;
+    const orderLabel = order ? `注文番号 ${String(order.pickup_no ?? '').padStart(3, '0')}` : '注文の指定なし';
+    const header = first
+      ? `【お問い合わせ #${thread.code}】${store.name}\n${orderLabel}${order ? `（${yen(order.total)}）` : ''}\nこのメッセージに「リプライ」で返信すると、お客様の画面に届きます。`
+      : `#${thread.code}（${orderLabel}）お客様より`;
+    const sent = await lineApi(env, '/v2/bot/message/push', { to: store.line_target, messages: [lineText(`${header}\n――――――――\n${text}`)] });
     lineMessageId = sent.json.sentMessages?.[0]?.id ?? null;
   }
-
-  const row = await c.env.DB.prepare(
+  const row = await env.DB.prepare(
     `INSERT INTO chat_messages (thread_id, sender, body, line_message_id, created_at) VALUES (?, 'customer', ?, ?, ?) RETURNING id, sender, body, created_at`,
   )
     .bind(thread.id, text, lineMessageId, now)
     .first<{ id: number; sender: string; body: string; created_at: string }>();
-  await c.env.DB.prepare(`UPDATE chat_threads SET last_message_at = ? WHERE id = ?`).bind(now, thread.id).run();
-  return c.json({ threadId: thread.id, token, code: thread.code, message: messageJson(row!) }, 201);
+  await env.DB.prepare(`UPDATE chat_threads SET last_message_at = ? WHERE id = ?`).bind(now, thread.id).run();
+  return messageJson(row!);
+}
+
+async function newThread(env: Env, storeId: string, orderId: string | null): Promise<{ thread: ThreadRow; token: string }> {
+  const now = nowIso();
+  const token = randomHex(24);
+  const thread: ThreadRow = { id: crypto.randomUUID(), store_id: storeId, code: chatCode(), token_hash: hex(await sha256(token)), order_id: orderId, created_at: now, last_message_at: now };
+  await env.DB.prepare(`INSERT INTO chat_threads (id, store_id, code, token_hash, order_id, created_at, last_message_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .bind(thread.id, thread.store_id, thread.code, thread.token_hash, thread.order_id, now, now)
+    .run();
+  return { thread, token };
+}
+
+const chatText = (v: unknown) => (typeof v === 'string' ? v.replace(/\r\n?/g, '\n').trim() : '');
+const storeForChat = (env: Env, id: string) =>
+  env.DB.prepare(`SELECT id, name, line_target FROM stores WHERE id = ?`).bind(id).first<{ id: string; name: string; line_target: string | null }>();
+
+// お客様：注文に紐づかない問い合わせ（端末が持つ合言葉でやり取りを引き継ぐ）
+app.post('/api/stores/:id/chat', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { threadId?: unknown; token?: unknown; body?: unknown } | null;
+  const text = chatText(body?.body);
+  if (!text || text.length > CHAT_MAX_LENGTH) return c.json({ error: 'bad_request' }, 400);
+  if (!(await rateLimit(c.env, 'chat', clientIp(c), 12, 300))) return c.json({ error: 'too_many_requests' }, 429);
+  const store = await storeForChat(c.env, c.req.param('id'));
+  if (!store) return c.json({ error: 'store_not_found' }, 404);
+
+  let thread: ThreadRow | null = null;
+  let token = typeof body?.token === 'string' ? body.token : '';
+  if (typeof body?.threadId === 'string' && token) {
+    const row = await c.env.DB.prepare(`SELECT * FROM chat_threads WHERE id = ? AND store_id = ? AND order_id IS NULL`).bind(body.threadId, store.id).first<ThreadRow>();
+    if (row && timingSafeEqual(enc.encode(hex(await sha256(token))), enc.encode(row.token_hash))) thread = row;
+  }
+  const first = !thread;
+  if (!thread) ({ thread, token } = await newThread(c.env, store.id, null));
+  const message = await addCustomerMessage(c.env, store, thread, first, text);
+  return c.json({ threadId: thread.id, token, code: thread.code, message }, 201);
+});
+
+// お客様：注文に紐づく問い合わせ。1 つの注文に 1 つのやり取り。注文 ID（購入の証明のリンク）があれば、どの端末からでも続きを開ける
+async function orderThread(env: Env, orderId: string) {
+  const order = await getOrder(env, orderId);
+  if (!order || order.status === 'pending') return { order: null, thread: null };
+  const thread = await env.DB.prepare(`SELECT * FROM chat_threads WHERE order_id = ? ORDER BY created_at DESC LIMIT 1`).bind(order.id).first<ThreadRow>();
+  return { order, thread };
+}
+
+app.get('/api/orders/:id/chat', async (c) => {
+  const { order, thread } = await orderThread(c.env, c.req.param('id'));
+  if (!order) return c.json({ error: 'order_not_found' }, 404);
+  c.header('Cache-Control', 'no-store');
+  if (!thread) return c.json({ code: null, orderNo: order.pickup_no, messages: [] });
+  const after = Number(c.req.query('after')) || 0;
+  const { results } = await c.env.DB.prepare(`SELECT id, sender, body, created_at FROM chat_messages WHERE thread_id = ? AND id > ? ORDER BY id LIMIT 200`)
+    .bind(thread.id, after)
+    .all<{ id: number; sender: string; body: string; created_at: string }>();
+  return c.json({ code: thread.code, orderNo: order.pickup_no, messages: results.map(messageJson) });
+});
+
+app.post('/api/orders/:id/chat', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { body?: unknown } | null;
+  const text = chatText(body?.body);
+  if (!text || text.length > CHAT_MAX_LENGTH) return c.json({ error: 'bad_request' }, 400);
+  if (!(await rateLimit(c.env, 'chat', clientIp(c), 12, 300))) return c.json({ error: 'too_many_requests' }, 429);
+  let { order, thread } = await orderThread(c.env, c.req.param('id'));
+  if (!order) return c.json({ error: 'order_not_found' }, 404);
+  const store = await storeForChat(c.env, order.store_id);
+  if (!store) return c.json({ error: 'store_not_found' }, 404);
+  const first = !thread;
+  if (!thread) ({ thread } = await newThread(c.env, store.id, order.id));
+  const message = await addCustomerMessage(c.env, store, thread!, first, text);
+  return c.json({ code: thread!.code, orderNo: order.pickup_no, message }, 201);
 });
 
 // お客様：やり取りを読む（端末が持つ合言葉が必要）

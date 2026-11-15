@@ -82,6 +82,17 @@
 
   <p><a id="contact-link" class="button-link" href="#">店舗にチャットで問い合わせる</a></p>
 </main>
+
+<dialog id="cam-dialog" class="cam-dialog" aria-labelledby="cam-title">
+  <h3 id="cam-title">写真を撮る</h3>
+  <div class="cam-frame"><video id="cam-video" playsinline muted></video></div>
+  <p id="cam-kind" class="note"></p>
+  <div class="cam-actions">
+    <button id="cam-cancel" type="button" class="ghost">やめる</button>
+    <button id="cam-shot" type="button" class="primary cam-shot" aria-label="撮影する"><span></span></button>
+    <button id="cam-switch" type="button" aria-label="カメラを切り替える（前面 / 背面）" hidden><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9a8 8 0 0 1 14-3l2 2"/><path d="M20 4v4h-4"/><path d="M20 15a8 8 0 0 1-14 3l-2-2"/><path d="M4 20v-4h4"/></svg></button>
+  </div>
+</dialog>
 <footer>
   <a href="/guide/customer">使い方</a>
   <a href="/legal/tokushoho">特定商取引法に基づく表記</a>

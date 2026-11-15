@@ -25,7 +25,6 @@ export type ReceiptMail = {
   tax: { rate: number; subtotal: number; tax: number }[];
   ageCheck: boolean;
   orderUrl: string | null;
-  contactUrl: string | null;
   returnUrl: string | null;
   returnDays: number;
   legalUrl: string | null;
@@ -46,10 +45,7 @@ const button = (href: string, label: string, dark: boolean) => `
 export function receiptHtml(m: ReceiptMail): string {
   const accent = m.ageCheck ? BROWN : GREEN;
   const hasReduced = m.items.some((i) => i.reduced);
-  const buttons = [
-    m.orderUrl ? button(m.orderUrl, '購入の証明を開く', true) : '',
-    m.contactUrl ? button(m.contactUrl, 'お店に問い合わせる', false) : '',
-  ].filter(Boolean);
+  const buttons = [m.orderUrl ? button(m.orderUrl, '購入の証明を開く', true) : ''].filter(Boolean);
 
   return `<!doctype html>
 <html lang="ja">

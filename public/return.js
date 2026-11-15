@@ -97,8 +97,14 @@
         t.append(img, rm); thumbs.append(t);
       }
       if (photos.length < MAX_PHOTOS) {
-        const add = el('label', 'add-photo');
+        // カメラで撮る：画面の中でカメラを起動する（端末のカメラアプリに頼らない）
+        const shoot = el('button', 'add-photo primary-soft', 'カメラで撮る');
+        shoot.type = 'button';
+        shoot.onclick = () => openCamera(k);
+        // 写真を選ぶ：撮影済みの写真を使う。画面内のカメラが使えない端末では、端末のカメラアプリを開く
+        const pick = el('label', 'add-photo');
         const input = el('input'); input.type = 'file'; input.accept = 'image/*'; input.hidden = true;
+        if (!camSupported) input.setAttribute('capture', 'environment');
         input.onchange = async () => {
           const file = input.files && input.files[0];
           if (!file) return;
@@ -106,25 +112,67 @@
           try { photos.push({ kind: k.kind, ...(await shrink(file)) }); } catch { showError('この写真を読み込めませんでした。別の写真でお試しください。'); }
           renderSlots();
         };
-        add.append(input, document.createTextNode('＋ 写真を撮る・選ぶ'));
-        thumbs.append(add);
+        pick.append(input, document.createTextNode(camSupported ? '写真を選ぶ' : '写真を撮る・選ぶ'));
+        if (camSupported) thumbs.append(shoot);
+        thumbs.append(pick);
       }
       box.append(thumbs);
       return box;
     }));
     $('submit').disabled = false;
   }
-  async function shrink(file) {
-    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
-    const scale = Math.min(1, 1280 / Math.max(bmp.width, bmp.height));
+  const shrink = async (file) => encode(await createImageBitmap(file, { imageOrientation: 'from-image' }));
+  /** 画像（写真ファイル・カメラの映像）を長辺 1280px 以内の JPEG にする。作り直すので、撮影データ（位置情報など）は残らない */
+  async function encode(src) {
+    const w = src.videoWidth || src.width, h = src.videoHeight || src.height;
+    const scale = Math.min(1, 1280 / Math.max(w, h));
     const c = document.createElement('canvas');
-    c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
-    const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    c.width = Math.round(w * scale); c.height = Math.round(h * scale);
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(src, 0, 0, c.width, c.height);
     let blob;
     for (const q of [0.82, 0.7, 0.58, 0.46]) { blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', q)); if (blob.size <= 480_000) break; }
     const b64 = await new Promise((resolve, reject) => { const fr = new FileReader(); fr.onload = () => resolve(String(fr.result).split(',')[1]); fr.onerror = reject; fr.readAsDataURL(blob); });
     return { data: b64, url: URL.createObjectURL(blob) };
   }
+  // ---- 画面内のカメラ ----
+  const camSupported = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  let camStream = null, camKind = null, facing = 'environment';
+  try { if (localStorage.getItem('scanFacing') === 'user') facing = 'user'; } catch { /* 背面カメラ */ }
+  const stopCamera = () => { if (camStream) camStream.getTracks().forEach((t) => t.stop()); camStream = null; $('cam-video').srcObject = null; };
+  async function startCamera() {
+    stopCamera();
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false });
+    $('cam-video').srcObject = camStream;
+    await $('cam-video').play().catch(() => {});
+  }
+  async function openCamera(k) {
+    camKind = k;
+    showError('');
+    $('cam-kind').textContent = '「' + k.label + '」を撮ります。商品だけが写るようにしてください。';
+    try { await startCamera(); }
+    catch { return showError('カメラを起動できませんでした。ブラウザの設定でカメラの使用を許可するか、「写真を選ぶ」から撮影済みの写真を選んでください。'); }
+    try { $('cam-switch').hidden = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput').length < 2; } catch { $('cam-switch').hidden = true; }
+    $('cam-dialog').showModal();
+  }
+  $('cam-shot').onclick = async () => {
+    const v = $('cam-video');
+    if (!v.videoWidth) return;
+    $('cam-shot').disabled = true;
+    try { photos.push({ kind: camKind.kind, ...(await encode(v)) }); if (navigator.vibrate) navigator.vibrate(40); }
+    catch { showError('撮影できませんでした。もう一度お試しください。'); }
+    $('cam-shot').disabled = false;
+    $('cam-dialog').close();
+    renderSlots();
+  };
+  $('cam-switch').onclick = async () => {
+    facing = facing === 'environment' ? 'user' : 'environment';
+    try { await startCamera(); try { localStorage.setItem('scanFacing', facing); } catch { /* 無視 */ } }
+    catch { facing = facing === 'environment' ? 'user' : 'environment'; await startCamera().catch(() => {}); }
+  };
+  $('cam-cancel').onclick = () => $('cam-dialog').close();
+  $('cam-dialog').addEventListener('close', stopCamera);
+  document.addEventListener('visibilitychange', () => { if (document.hidden && $('cam-dialog').open) $('cam-dialog').close(); });
+
   const reason = () => document.querySelector('input[name=reason]:checked').value;
   const showTips = () => { $('photo-tips').textContent = TIPS[reason()]; };
   for (const r of document.querySelectorAll('input[name=reason]')) r.onchange = showTips;
