@@ -361,3 +361,8 @@ tr.sum td:last-child { font-size: 1.6rem; font-weight: 900; letter-spacing: -.02
   @keyframes panel-in-right { from { opacity: 0; transform: translateX(36px); } to { opacity: 1; transform: none; } }
   @keyframes panel-in-left { from { opacity: 0; transform: translateX(-36px); } to { opacity: 1; transform: none; } }
 }
+
+/* スキャン / カートの切り替えは、スクロールしても画面の上に固定する（店舗名のヘッダーは一緒に流れて消える） */
+.seg-wrap { position: sticky; top: 0; z-index: 9; margin: 0 -16px 14px; padding: 8px 16px; background: var(--bg); }
+.seg-wrap .seg { margin-bottom: 0; }
+.seg-wrap.stuck { box-shadow: 0 1px 0 var(--line); }

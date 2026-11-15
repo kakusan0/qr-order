@@ -569,6 +569,10 @@
       stopScan(); // カートを見ているあいだはカメラを止める
     }
   }
+  // 切り替えのタブが上に貼り付いているあいだだけ、下に区切り線を出す
+  const segWrap = document.querySelector('.seg-wrap');
+  const onScroll = () => segWrap.classList.toggle('stuck', segWrap.getBoundingClientRect().top <= 0);
+  window.addEventListener('scroll', onScroll, { passive: true });
   $('tab-scan').onclick = () => setView('scan', -1);
   $('tab-cart').onclick = () => setView('cart', 1);
 
