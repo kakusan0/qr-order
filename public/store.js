@@ -325,6 +325,7 @@
       }
       const { orderId, clientSecret } = await res.json();
       localStorage.setItem('lastOrder:' + storeId, orderId);
+        if (window.rememberOrder) window.rememberOrder(storeId, orderId);
 
       // PayPay などは外部の画面へ移動し、完了後に注文状況の画面へ戻る
       const { error } = await stripe.confirmPayment({

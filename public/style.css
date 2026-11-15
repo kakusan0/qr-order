@@ -366,3 +366,37 @@ tr.sum td:last-child { font-size: 1.6rem; font-weight: 900; letter-spacing: -.02
 .seg-wrap { position: sticky; top: 0; z-index: 9; margin: 0 -16px 14px; padding: 8px 16px; background: var(--bg); }
 .seg-wrap .seg { margin-bottom: 0; }
 .seg-wrap.stuck { box-shadow: 0 1px 0 var(--line); }
+
+/* 返品・交換 */
+.ret-sum { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; }
+.ret-form { display: grid; gap: 14px; margin-top: 8px; }
+.ret-form fieldset.card { margin: 0; border: 1px solid var(--line); display: grid; gap: 10px; }
+.ret-form legend { font-weight: 800; padding: 0 6px; }
+.ret-form textarea { font: inherit; width: 100%; padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--line); background: color-mix(in srgb, var(--text) 3%, var(--card)); color: var(--text); resize: vertical; }
+.ret-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent); }
+.radio { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.radio input { width: 22px; height: 22px; flex: none; accent-color: var(--brand-1); }
+.radio.check { align-items: flex-start; }
+.ret-item { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+.ret-item input[type="checkbox"] { width: 24px; height: 24px; flex: none; accent-color: var(--brand-1); }
+.ret-item label { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.ret-item select { min-height: 44px; }
+.ret-name { font-weight: 700; overflow-wrap: anywhere; }
+.slots { display: grid; gap: 10px; }
+.slot { padding: 10px 12px; border: 1px dashed var(--line); border-radius: var(--r-md); }
+.slot.need { border-color: var(--warn); }
+.slot-label { font-size: .85rem; font-weight: 700; margin-bottom: 6px; }
+.thumbs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.thumb { position: relative; width: 84px; height: 84px; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: 12px; border: 1px solid var(--line); }
+.thumb-x { position: absolute; top: -8px; right: -8px; width: 28px; min-height: 28px; height: 28px; padding: 0; border-radius: 50%; background: var(--bar-bg); color: var(--bar-fg); border: 0; font-size: 1rem; line-height: 1; }
+.add-photo { display: inline-flex; align-items: center; justify-content: center; min-height: 84px; padding: 0 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-weight: 700; font-size: .85rem; cursor: pointer; }
+.ret-card { display: grid; gap: 6px; }
+.ret-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ret-state { font-weight: 800; color: var(--accent); }
+.ret-card.rejected .ret-state { color: var(--warn); }
+.ret-card p { margin: 0; }
+.ret-items { color: var(--muted); font-size: .9rem; }
+.ret-note { padding: 10px 12px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--text) 5%, transparent); }
+.order-pick { display: grid; gap: 8px; }
+.order-pick select { width: 100%; }

@@ -38,6 +38,8 @@ type Env = {
   STRIPE_API_BASE?: string;
   TURNSTILE_VERIFY_URL?: string;
   MAIL_API_BASE?: string;
+  /** 返品・交換を申し込める期間（日）。既定 7 日 */
+  RETURN_WINDOW_DAYS?: string;
   /** LINE 公式アカウント（Messaging API）のチャネルアクセストークンとチャネルシークレット。問い合わせチャットを LINE で受けるのに使う */
   LINE_CHANNEL_ACCESS_TOKEN?: string;
   LINE_CHANNEL_SECRET?: string;
@@ -332,7 +334,7 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
       ...taxSummary(items).map((t) => `${t.rate}%対象 ${yen(t.subtotal)}（内消費税 ${yen(t.tax)}）`),
       ...(items.some((i) => i.tax_rate === 8) ? ['※は軽減税率（8%）対象商品です。'] : []),
       '',
-      ...(order.origin ? ['商品の不良・誤りなどのお問い合わせ先、返品の条件は、下記の「特定商取引法に基づく表記」をご覧ください。', `${order.origin}/legal/tokushoho`, ''] : []),
+      ...(order.origin ? [`商品に不良・誤りがあったときは、お支払いから ${returnWindowDays(env)} 日以内に、写真を添えて返品・交換を申し込めます（お客様のご都合による返品はお受けできません）。`, `${order.origin}/return/${order.id}`, '', '返品の条件などは、下記の「特定商取引法に基づく表記」をご覧ください。', `${order.origin}/legal/tokushoho`, ''] : []),
       'このメールは、ご購入時に入力されたメールアドレスへ自動で送信しています。',
       'お心当たりがない場合は、このメールを破棄してください。',
     ];
@@ -348,6 +350,8 @@ async function sendReceipt(env: Env, orderId: string): Promise<void> {
       ageCheck: order.age_check_required === 1,
       orderUrl: order.origin ? `${order.origin}/order/${order.id}` : null,
       contactUrl: order.origin ? `${order.origin}/contact/${encodeURIComponent(order.store_id)}?order=${order.id}` : null,
+      returnUrl: order.origin ? `${order.origin}/return/${order.id}` : null,
+      returnDays: returnWindowDays(env),
       legalUrl: order.origin ? `${order.origin}/legal/tokushoho` : null,
     });
     sent = await sendMail(env, order.receipt_email, `【${store!.name}】ご購入ありがとうございます（注文番号 ${pickup}）`, lines.join('\n'), html);
@@ -727,7 +731,8 @@ app.get('/api/chat/:threadId', async (c) => {
     .bind(thread.id, after)
     .all<{ id: number; sender: string; body: string; created_at: string }>();
   c.header('Cache-Control', 'no-store');
-  return c.json({ code: thread.code, messages: results.map(messageJson) });
+  const order = thread.order_id ? await c.env.DB.prepare(`SELECT pickup_no FROM orders WHERE id = ?`).bind(thread.order_id).first<{ pickup_no: number | null }>() : null;
+  return c.json({ code: thread.code, orderNo: order?.pickup_no ?? null, messages: results.map(messageJson) });
 });
 
 /** 店舗からの返信を保存する */
@@ -1206,60 +1211,247 @@ app.post('/api/staff/orders/:id/age-check', async (c) => {
   return c.json({ ok: true });
 });
 
-// 返金（全額・一部）。管理者のみ
-app.post('/api/staff/orders/:id/refund', adminOnly, async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { amount?: unknown; requestId?: unknown } | null;
-  const order = await getOrder(c.env, c.req.param('id'));
-  if (!order) return c.json({ error: 'order_not_found' }, 404);
+type RefundResult = { ok: true; refunded: number; remaining: number } | { ok: false; status: 400 | 404 | 409 | 502; error: string; remaining?: number };
+
+/** 返金（全額・一部）。注文額を超えないよう先に枠を確保してから決済会社に依頼し、失敗したら枠を戻す */
+async function refundOrder(env: Env, orderId: string, amountIn: unknown, requestIdIn: unknown, staff: string): Promise<RefundResult> {
+  const order = await getOrder(env, orderId);
+  if (!order) return { ok: false, status: 404, error: 'order_not_found' };
   if ((order.status !== 'paid' && order.status !== 'handed_over') || !order.payment_intent_id) {
-    return c.json({ error: 'not_refundable' }, 409);
+    return { ok: false, status: 409, error: 'not_refundable' };
   }
   const remaining = order.total - order.refunded_amount;
-  const amount = body?.amount === undefined || body?.amount === null ? remaining : body.amount;
+  const amount = amountIn === undefined || amountIn === null ? remaining : amountIn;
   if (typeof amount !== 'number' || !Number.isInteger(amount) || amount < 1 || amount > remaining) {
-    return c.json({ error: 'bad_amount', remaining }, 400);
+    return { ok: false, status: 400, error: 'bad_amount', remaining };
   }
-  const requestId =
-    typeof body?.requestId === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.requestId) ? body.requestId : crypto.randomUUID();
+  const requestId = typeof requestIdIn === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(requestIdIn) ? requestIdIn : crypto.randomUUID();
 
-  // 先に返金枠を確保する（同時操作で注文額を超えて返金しないため）
-  const reserve = await c.env.DB.prepare(
+  const reserve = await env.DB.prepare(
     `UPDATE orders SET refunded_amount = refunded_amount + ?1
      WHERE id = ?2 AND status IN ('paid', 'handed_over') AND refunded_amount + ?1 <= total`,
   )
     .bind(amount, order.id)
     .run();
-  if (reserve.meta.changes !== 1) return c.json({ error: 'not_refundable' }, 409);
+  if (reserve.meta.changes !== 1) return { ok: false, status: 409, error: 'not_refundable' };
 
   try {
-    await stripe(
-      c.env,
-      'POST',
-      '/refunds',
-      { payment_intent: order.payment_intent_id, amount: String(amount) },
-      `refund-${order.id}-${requestId}`,
-    );
+    await stripe(env, 'POST', '/refunds', { payment_intent: order.payment_intent_id, amount: String(amount) }, `refund-${order.id}-${requestId}`);
   } catch (e) {
-    await c.env.DB.prepare(`UPDATE orders SET refunded_amount = refunded_amount - ? WHERE id = ?`).bind(amount, order.id).run();
+    await env.DB.prepare(`UPDATE orders SET refunded_amount = refunded_amount - ? WHERE id = ?`).bind(amount, order.id).run();
     console.error(e);
-    return c.json({ error: 'payment_provider_error' }, 502);
+    return { ok: false, status: 502, error: 'payment_provider_error' };
   }
 
   const now = nowIso();
-  await c.env.DB.batch([
-    c.env.DB.prepare(`INSERT INTO refunds (id, order_id, amount, staff, created_at) VALUES (?, ?, ?, ?, ?)`).bind(
-      crypto.randomUUID(),
-      order.id,
-      amount,
-      c.get('session').username,
-      now,
-    ),
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO refunds (id, order_id, amount, staff, created_at) VALUES (?, ?, ?, ?, ?)`).bind(crypto.randomUUID(), order.id, amount, staff, now),
     // 全額を返金し終えたら「返金済」にする
-    c.env.DB.prepare(
+    env.DB.prepare(
       `UPDATE orders SET refunded_at = ?1, status = CASE WHEN refunded_amount >= total THEN 'refunded' ELSE status END WHERE id = ?2`,
     ).bind(now, order.id),
   ]);
-  return c.json({ ok: true, refunded: amount, remaining: remaining - amount });
+  return { ok: true, refunded: amount, remaining: remaining - amount };
+}
+
+// 返金（全額・一部）。管理者のみ
+app.post('/api/staff/orders/:id/refund', adminOnly, async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { amount?: unknown; requestId?: unknown } | null;
+  const r = await refundOrder(c.env, c.req.param('id'), body?.amount, body?.requestId, c.get('session').username);
+  if (!r.ok) return c.json({ error: r.error, ...(r.remaining !== undefined ? { remaining: r.remaining } : {}) }, r.status);
+  return c.json({ ok: true, refunded: r.refunded, remaining: r.remaining });
+});
+
+// ---------- 返品・交換の申請（商品の不良・誤りなど。メールのボタンや購入の証明の画面から） ----------
+
+const RETURN_REASONS = ['defect', 'wrong_item', 'expired', 'other'] as const;
+const RETURN_PHOTO_KINDS = ['whole', 'defect', 'label', 'other'] as const;
+const RETURN_MAX_PHOTOS = 5;
+const RETURN_MIN_PHOTOS = 2;
+const RETURN_PHOTO_MAX_BYTES = 600_000;
+const RETURN_RETENTION_DAYS = 90;
+const returnWindowDays = (env: Env) => Math.min(Math.max(Number(env.RETURN_WINDOW_DAYS) || 7, 1), 90);
+
+type ReturnRow = {
+  id: string; order_id: string; store_id: string; code: string; reason: string; detail: string; wanted: string; status: string;
+  resolution: string | null; refund_amount: number; staff_note: string | null; decided_by: string | null; decided_at: string | null;
+  completed_at: string | null; created_at: string;
+};
+
+/** この注文で、まだ返品・交換の申請に使える数量（却下されたものは数えない） */
+async function returnableItems(env: Env, orderId: string) {
+  const { results } = await env.DB.prepare(
+    `SELECT oi.product_id AS productId, oi.name, oi.unit_price AS unitPrice, oi.qty,
+            oi.qty - COALESCE((SELECT SUM(ri.qty) FROM return_items ri JOIN returns r ON r.id = ri.return_id
+                               WHERE r.order_id = oi.order_id AND ri.product_id = oi.product_id AND r.status != 'rejected'), 0) AS available
+     FROM order_items oi WHERE oi.order_id = ?`,
+  )
+    .bind(orderId)
+    .all<{ productId: string; name: string; unitPrice: number; qty: number; available: number }>();
+  return results;
+}
+
+const returnJson = async (env: Env, r: ReturnRow) => {
+  const { results: items } = await env.DB.prepare(`SELECT name, qty, unit_price AS unitPrice FROM return_items WHERE return_id = ?`).bind(r.id).all();
+  return {
+    id: r.id, code: r.code, reason: r.reason, detail: r.detail, wanted: r.wanted, status: r.status, resolution: r.resolution,
+    refundAmount: r.refund_amount, staffNote: r.staff_note, createdAt: r.created_at, decidedAt: r.decided_at, completedAt: r.completed_at, items,
+  };
+};
+
+// お客様：この注文の返品・交換の状況と、申請できる商品
+app.get('/api/orders/:id/returns', async (c) => {
+  const order = await getOrder(c.env, c.req.param('id'));
+  if (!order || order.status === 'pending') return c.json({ error: 'order_not_found' }, 404);
+  const days = returnWindowDays(c.env);
+  const deadline = new Date(new Date(order.paid_at ?? order.created_at).getTime() + days * 86400_000);
+  const store = await c.env.DB.prepare(`SELECT name FROM stores WHERE id = ?`).bind(order.store_id).first<{ name: string }>();
+  const { results: rows } = await c.env.DB.prepare(`SELECT * FROM returns WHERE order_id = ? ORDER BY created_at DESC LIMIT 20`).bind(order.id).all<ReturnRow>();
+  const items = await returnableItems(c.env, order.id);
+  c.header('Cache-Control', 'no-store');
+  return c.json({
+    store: { id: order.store_id, name: store?.name ?? '' },
+    orderNo: order.pickup_no,
+    total: order.total,
+    paidAt: order.paid_at,
+    refunded: order.status === 'refunded',
+    windowDays: days,
+    deadline: deadline.toISOString(),
+    open: Date.now() <= deadline.getTime() && order.status !== 'refunded',
+    items,
+    returns: await Promise.all(rows.map((r) => returnJson(c.env, r))),
+  });
+});
+
+const isJpeg = (b: Uint8Array) => b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+
+// お客様：返品・交換を申し込む
+app.post('/api/orders/:id/returns', async (c) => {
+  if (!(await rateLimit(c.env, 'return', clientIp(c), 6, 3600))) return c.json({ error: 'too_many_requests' }, 429);
+  const order = await getOrder(c.env, c.req.param('id'));
+  if (!order || order.status === 'pending') return c.json({ error: 'order_not_found' }, 404);
+  if (order.status === 'refunded') return c.json({ error: 'already_refunded' }, 409);
+  const deadline = new Date(order.paid_at ?? order.created_at).getTime() + returnWindowDays(c.env) * 86400_000;
+  if (Date.now() > deadline) return c.json({ error: 'window_closed' }, 409);
+
+  const body = (await c.req.json().catch(() => null)) as {
+    reason?: unknown; detail?: unknown; wanted?: unknown; agree?: unknown; items?: unknown; photos?: unknown;
+  } | null;
+  const reason = RETURN_REASONS.find((r) => r === body?.reason);
+  const wanted = body?.wanted === 'refund' || body?.wanted === 'exchange' ? body.wanted : null;
+  const detail = typeof body?.detail === 'string' ? body.detail.replace(/\r\n?/g, '\n').trim() : '';
+  if (!reason || !wanted || detail.length < 5 || detail.length > 1000 || body?.agree !== true || !Array.isArray(body?.items) || !Array.isArray(body?.photos)) {
+    return c.json({ error: 'bad_request' }, 400);
+  }
+
+  // 商品と数量：この注文にあり、まだ申請していない数量まで
+  const available = new Map((await returnableItems(c.env, order.id)).map((i) => [i.productId, i]));
+  const chosen = new Map<string, number>();
+  for (const it of body.items as { productId?: unknown; qty?: unknown }[]) {
+    if (!it || typeof it.productId !== 'string' || !Number.isInteger(it.qty) || (it.qty as number) < 1) return c.json({ error: 'bad_request' }, 400);
+    chosen.set(it.productId, (chosen.get(it.productId) ?? 0) + (it.qty as number));
+  }
+  if (chosen.size === 0 || [...chosen].some(([id, q]) => !available.has(id) || q > available.get(id)!.available)) return c.json({ error: 'items_unavailable' }, 409);
+
+  // 写真：端末で縮小した JPEG だけを受け付ける
+  const photos = (body.photos as { kind?: unknown; data?: unknown }[]).slice(0, RETURN_MAX_PHOTOS + 1);
+  if (photos.length > RETURN_MAX_PHOTOS || photos.length < RETURN_MIN_PHOTOS) return c.json({ error: 'photos_required', min: RETURN_MIN_PHOTOS }, 400);
+  const decoded: { kind: string; data: string }[] = [];
+  for (const ph of photos) {
+    const kind = RETURN_PHOTO_KINDS.find((k) => k === ph?.kind);
+    if (!kind || typeof ph.data !== 'string' || !/^[A-Za-z0-9+/=]+$/.test(ph.data)) return c.json({ error: 'bad_photo' }, 400);
+    let bytes: Uint8Array;
+    try { bytes = Uint8Array.from(atob(ph.data), (ch) => ch.charCodeAt(0)); } catch { return c.json({ error: 'bad_photo' }, 400); }
+    if (bytes.length > RETURN_PHOTO_MAX_BYTES || !isJpeg(bytes)) return c.json({ error: 'bad_photo' }, 400);
+    decoded.push({ kind, data: ph.data });
+  }
+  if (!decoded.some((p) => p.kind === 'whole')) return c.json({ error: 'photos_required', min: RETURN_MIN_PHOTOS }, 400);
+
+  // 同じ注文で同時に進められるのは 3 件まで
+  const open = await c.env.DB.prepare(`SELECT count(*) AS n FROM returns WHERE order_id = ? AND status IN ('submitted', 'approved')`).bind(order.id).first<{ n: number }>();
+  if ((open?.n ?? 0) >= 3) return c.json({ error: 'too_many_open' }, 409);
+
+  const id = crypto.randomUUID();
+  const code = 'R' + chatCode().slice(0, 3);
+  const now = nowIso();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `INSERT INTO returns (id, order_id, store_id, code, reason, detail, wanted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(id, order.id, order.store_id, code, reason, detail, wanted, now),
+    ...[...chosen].map(([productId, qty]) =>
+      c.env.DB.prepare(`INSERT INTO return_items (return_id, product_id, name, unit_price, qty) VALUES (?, ?, ?, ?, ?)`).bind(
+        id, productId, available.get(productId)!.name, available.get(productId)!.unitPrice, qty,
+      ),
+    ),
+    ...decoded.map((p) => c.env.DB.prepare(`INSERT INTO return_photos (return_id, kind, data, created_at) VALUES (?, ?, ?, ?)`).bind(id, p.kind, p.data, now)),
+  ]);
+
+  // 店舗の LINE に知らせる（届かなくても申請は保存済み）
+  const store = await c.env.DB.prepare(`SELECT name, line_target FROM stores WHERE id = ?`).bind(order.store_id).first<{ name: string; line_target: string | null }>();
+  if (lineEnabled(c.env) && store?.line_target) {
+    const labels: Record<string, string> = { defect: '商品の不良・破損', wrong_item: '違う商品', expired: '期限切れ・傷み', other: 'その他' };
+    await lineApi(c.env, '/v2/bot/message/push', {
+      to: store.line_target,
+      messages: [lineText(`【返品・交換の申請 ${code}】${store.name}\n注文番号 ${String(order.pickup_no ?? '').padStart(3, '0')}\n理由: ${labels[reason]}\nご希望: ${wanted === 'refund' ? '返金' : '交換'}\n写真 ${decoded.length} 枚\n管理画面の「返品」で確認してください。`)],
+    });
+  }
+  return c.json({ id, code }, 201);
+});
+
+// ---------- スタッフ：返品・交換 ----------
+
+app.get('/api/staff/returns', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT r.*, o.pickup_no AS orderNo, o.total AS orderTotal, o.refunded_amount AS orderRefunded
+     FROM returns r JOIN orders o ON o.id = r.order_id WHERE r.store_id = ? ORDER BY CASE r.status WHEN 'submitted' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, r.created_at DESC LIMIT 60`,
+  )
+    .bind(c.req.query('store') ?? '')
+    .all<ReturnRow & { orderNo: number | null; orderTotal: number; orderRefunded: number }>();
+  const out = [];
+  for (const r of results) {
+    const { results: photos } = await c.env.DB.prepare(`SELECT id, kind FROM return_photos WHERE return_id = ? ORDER BY id`).bind(r.id).all();
+    out.push({ ...(await returnJson(c.env, r)), orderNo: r.orderNo, orderTotal: r.orderTotal, orderRefundable: r.orderTotal - r.orderRefunded, orderId: r.order_id, decidedBy: r.decided_by, photos });
+  }
+  c.header('Cache-Control', 'no-store');
+  return c.json({ returns: out });
+});
+
+app.get('/api/staff/returns/:id/photos/:photoId', async (c) => {
+  const row = await c.env.DB.prepare(`SELECT data FROM return_photos WHERE id = ? AND return_id = ?`).bind(c.req.param('photoId'), c.req.param('id')).first<{ data: string }>();
+  if (!row) return c.text('not found', 404);
+  return c.body(Uint8Array.from(atob(row.data), (ch) => ch.charCodeAt(0)), 200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=300', 'X-Content-Type-Options': 'nosniff' });
+});
+
+// 承認・却下（管理者のみ）。承認は「返金」か「交換」のどちらで対応するかを決める
+app.post('/api/staff/returns/:id/decide', adminOnly, async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { decision?: unknown; note?: unknown } | null;
+  const note = typeof body?.note === 'string' ? body.note.trim().slice(0, 500) : '';
+  const decision = body?.decision;
+  if (decision !== 'refund' && decision !== 'exchange' && decision !== 'reject') return c.json({ error: 'bad_request' }, 400);
+  if (decision === 'reject' && !note) return c.json({ error: 'note_required' }, 400);
+  const res = await c.env.DB.prepare(
+    `UPDATE returns SET status = ?, resolution = ?, staff_note = ?, decided_by = ?, decided_at = ? WHERE id = ? AND status = 'submitted'`,
+  )
+    .bind(decision === 'reject' ? 'rejected' : 'approved', decision === 'reject' ? null : decision, note || null, c.get('session').username, nowIso(), c.req.param('id'))
+    .run();
+  if (res.meta.changes !== 1) return c.json({ error: 'not_pending' }, 409);
+  return c.json({ ok: true });
+});
+
+// 商品を回収したら完了にする。返金のときは、ここで決済会社に返金を依頼する（管理者のみ）
+app.post('/api/staff/returns/:id/complete', adminOnly, async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { amount?: unknown; requestId?: unknown } | null;
+  const ret = await c.env.DB.prepare(`SELECT * FROM returns WHERE id = ?`).bind(c.req.param('id')).first<ReturnRow>();
+  if (!ret || ret.status !== 'approved') return c.json({ error: 'not_approved' }, 409);
+  let refunded = 0;
+  if (ret.resolution === 'refund') {
+    const sum = (await c.env.DB.prepare(`SELECT COALESCE(SUM(unit_price * qty), 0) AS n FROM return_items WHERE return_id = ?`).bind(ret.id).first<{ n: number }>())?.n ?? 0;
+    const r = await refundOrder(c.env, ret.order_id, body?.amount ?? sum, body?.requestId ?? `ret-${ret.id}`, c.get('session').username);
+    if (!r.ok) return c.json({ error: r.error, ...(r.remaining !== undefined ? { remaining: r.remaining } : {}) }, r.status);
+    refunded = r.refunded;
+  }
+  await c.env.DB.prepare(`UPDATE returns SET status = 'completed', completed_at = ?, refund_amount = ? WHERE id = ? AND status = 'approved'`).bind(nowIso(), refunded, ret.id).run();
+  return c.json({ ok: true, refunded });
 });
 
 // ---------- スタッフ：商品 ----------
@@ -1658,6 +1850,7 @@ app.get('/s/:storeId/manifest.webmanifest', async (c) => {
 });
 app.get('/s/:storeId', page('/store'));
 app.get('/contact/:storeId', page('/contact'));
+app.get('/return/:orderId', page('/return'));
 app.get('/order/:orderId', page('/order'));
 
 app.all('/api/*', (c) => c.json({ error: 'not_found' }, 404));
@@ -1711,6 +1904,10 @@ async function cleanup(env: Env): Promise<void> {
     env.DB.prepare(`DELETE FROM refunds WHERE order_id IN (SELECT id FROM orders WHERE created_at < ?)`).bind(old),
     env.DB.prepare(`DELETE FROM orders WHERE created_at < ?`).bind(old),
     // 3) 期限切れのログインと回数制限の記録
+    // 返品・交換の申請（写真を含む）：完了・却下から 90 日、未完了のまま 180 日で消去する
+    env.DB.prepare(`DELETE FROM return_photos WHERE return_id IN (SELECT id FROM returns WHERE (status IN ('completed', 'rejected') AND COALESCE(completed_at, decided_at, created_at) < ?1) OR created_at < ?2)`).bind(new Date(Date.now() - RETURN_RETENTION_DAYS * 86400_000).toISOString(), new Date(Date.now() - 2 * RETURN_RETENTION_DAYS * 86400_000).toISOString()),
+    env.DB.prepare(`DELETE FROM return_items WHERE return_id IN (SELECT id FROM returns WHERE (status IN ('completed', 'rejected') AND COALESCE(completed_at, decided_at, created_at) < ?1) OR created_at < ?2)`).bind(new Date(Date.now() - RETURN_RETENTION_DAYS * 86400_000).toISOString(), new Date(Date.now() - 2 * RETURN_RETENTION_DAYS * 86400_000).toISOString()),
+    env.DB.prepare(`DELETE FROM returns WHERE (status IN ('completed', 'rejected') AND COALESCE(completed_at, decided_at, created_at) < ?1) OR created_at < ?2`).bind(new Date(Date.now() - RETURN_RETENTION_DAYS * 86400_000).toISOString(), new Date(Date.now() - 2 * RETURN_RETENTION_DAYS * 86400_000).toISOString()),
     // お問い合わせのやり取りは 90 日で消去する
     env.DB.prepare(`DELETE FROM chat_messages WHERE thread_id IN (SELECT id FROM chat_threads WHERE last_message_at < ?)`).bind(new Date(Date.now() - CHAT_RETENTION_DAYS * 86400_000).toISOString()),
     env.DB.prepare(`DELETE FROM chat_threads WHERE last_message_at < ?`).bind(new Date(Date.now() - CHAT_RETENTION_DAYS * 86400_000).toISOString()),

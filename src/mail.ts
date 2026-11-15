@@ -26,6 +26,8 @@ export type ReceiptMail = {
   ageCheck: boolean;
   orderUrl: string | null;
   contactUrl: string | null;
+  returnUrl: string | null;
+  returnDays: number;
   legalUrl: string | null;
 };
 
@@ -88,6 +90,24 @@ ${
     ? `<tr><td style="padding:14px 0 0;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
     ${buttons.join('<td width="10" style="width:10px;font-size:0;line-height:0;">&nbsp;</td>')}
+  </tr></table>
+</td></tr>`
+    : ''
+}
+
+${
+  m.returnUrl
+    ? `<tr><td style="padding:14px 0 0;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border:1px solid ${LINE};border-radius:20px;"><tr>
+    <td style="padding:16px 20px;">
+      <div style="font-size:14px;line-height:1.6;font-weight:700;color:${INK};">商品に不良・誤りがあったとき</div>
+      <div style="margin-top:4px;font-size:13px;line-height:1.8;color:${MUTED};">お支払いから ${m.returnDays} 日以内に、商品の写真を添えて返品・交換を申し込めます。お客様のご都合による返品はお受けできません。</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:12px;"><tr>
+        <td align="center" style="border-radius:16px;background:${GREEN};">
+          <a href="${esc(m.returnUrl)}" style="display:block;padding:14px 10px;font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;">返品・交換を申し込む</a>
+        </td>
+      </tr></table>
+    </td>
   </tr></table>
 </td></tr>`
     : ''

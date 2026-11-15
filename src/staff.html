@@ -57,6 +57,10 @@
   #chat-dialog { width: min(560px, calc(100% - 24px)); }
   #chat-dialog .chat-log { max-height: 46vh; overflow-y: auto; padding: 4px; }
   #chat-dialog textarea { font: inherit; width: 100%; padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--line); background: color-mix(in srgb, var(--text) 3%, var(--card)); color: var(--text); }
+  .thumb-btn { position: relative; padding: 0; width: 92px; min-height: 92px; height: 92px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
+  .thumb-btn img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb-kind { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 4px; font-size: .7rem; font-weight: 700; background: rgba(0,0,0,.6); color: #fff; }
+  .ret-detail { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   .line-code { font-size: 1.6rem; font-weight: 900; letter-spacing: .06em; margin: 4px 0; font-variant-numeric: tabular-nums; }
   .thread { cursor: pointer; text-align: left; width: 100%; font-weight: 400; display: grid; gap: 4px; padding: 14px 16px; border-radius: var(--r-lg); min-height: 0; }
   .thread .head { display: flex; gap: 10px; align-items: baseline; }
@@ -119,6 +123,7 @@
   <nav class="tabs" role="tablist" aria-label="メニュー">
     <button role="tab" data-tab="orders" aria-selected="true">注文<span id="count" class="badge" hidden>0</span></button>
     <button role="tab" data-tab="products" aria-selected="false">商品</button>
+    <button role="tab" data-tab="returns" aria-selected="false">返品<span id="ret-count" class="badge" hidden>0</span></button>
     <button role="tab" data-tab="chat" aria-selected="false">問い合わせ<span id="chat-count" class="badge" hidden>0</span></button>
     <button role="tab" data-tab="qr" aria-selected="false">店舗 QR</button>
     <button role="tab" data-tab="accounts" aria-selected="false" data-admin hidden>スタッフ</button>
@@ -170,6 +175,13 @@
           <div id="products" class="grid products"></div>
         </section>
       </div>
+    </section>
+
+    <!-- 返品・交換 -->
+    <section data-panel="returns" hidden>
+      <h2>返品・交換の申請</h2>
+      <p class="note">お客様がメールや購入の証明の画面から申し込んだ、商品の不良・誤りなどの申請です。写真と説明を確認し、管理者が承認・却下を決めます。承認したら、お客様が商品を店頭に持参した時点で「商品を回収して完了」を押します（返金の場合は、ここで返金されます）。</p>
+      <div id="returns" class="grid"></div>
     </section>
 
     <!-- 問い合わせ -->
@@ -268,6 +280,21 @@
   <div class="actions"><button id="scan-switch" type="button" hidden>カメラを切り替える</button><button id="scan-cancel" type="button" class="ghost">やめる</button></div>
 </dialog>
 
+<dialog id="photo-dialog" data-noswipe>
+  <img id="photo-big" alt="お客様が送った写真" style="max-width:100%;max-height:70vh;display:block;margin:0 auto;border-radius:12px">
+  <div class="actions" style="margin-top:12px"><button type="button" id="photo-close" class="ghost">閉じる</button></div>
+</dialog>
+
+<dialog id="return-dialog" data-noswipe>
+  <form method="dialog" class="form" id="return-form">
+    <h3 id="return-title"></h3>
+    <p id="return-info" class="note"></p>
+    <label id="return-note-wrap">お客様に表示するメッセージ<textarea id="return-note" rows="3" maxlength="500" placeholder="例: ご迷惑をおかけしました。商品をお持ちのうえ、レジでお申し付けください。"></textarea></label>
+    <label id="return-amount-wrap">返金額（円）<input id="return-amount" type="text" inputmode="none" pattern="[0-9]*" data-digits data-keypad maxlength="7" autocomplete="off"></label>
+    <div class="actions"><button id="return-ok" class="primary" value="ok">決定する</button><button class="ghost" value="cancel" formnovalidate>やめる</button></div>
+  </form>
+</dialog>
+
 <dialog id="chat-dialog">
   <h3 id="chat-title">お問い合わせ</h3>
   <div id="chat-log" class="chat-log" data-noswipe></div>
@@ -357,6 +384,7 @@ function showTab(name, direction) {
   if (name === 'products') loadProducts();
   if (name === 'accounts') loadAccounts();
   if (name === 'chat') loadChat();
+  if (name === 'returns') loadReturns();
   if (name === 'me') loadPasskeys();
 }
 for (const b of document.querySelectorAll('.tabs [data-tab]')) b.onclick = () => showTab(b.dataset.tab);
@@ -586,6 +614,92 @@ $('product-form').onsubmit = async (ev) => {
   }
   $('p-submit').disabled = false;
 };
+
+// ---------- 返品・交換 ----------
+const REASONS = { defect: '商品の不良・破損・汚れ', wrong_item: '注文と違う商品', expired: '期限切れ・傷み・異物', other: 'その他' };
+const KIND_LABELS = { whole: '全体', defect: '不具合', label: 'ラベル', other: 'その他' };
+let pendingReturn = null;
+
+async function loadReturns() {
+  const store = $('store').value;
+  if (!store) return;
+  try {
+    const { returns } = await api('/api/staff/returns?store=' + encodeURIComponent(store));
+    const waiting = returns.filter((r) => r.status === 'submitted').length;
+    $('ret-count').textContent = waiting;
+    $('ret-count').hidden = waiting === 0;
+    if (document.querySelector('[data-panel="returns"]').hidden || $('return-dialog').open) return;
+    $('returns').replaceChildren(...(returns.length ? returns.map(returnCard) : [el('p', 'note', '返品・交換の申請はまだありません。')]));
+  } catch (e) {
+    $('returns').replaceChildren(el('p', 'error', '返品・交換の申請を取得できません。'));
+  }
+}
+
+function returnCard(r) {
+  const label = { submitted: '確認待ち', approved: r.resolution === 'exchange' ? '承認（交換）・商品の回収待ち' : '承認（返金）・商品の回収待ち', completed: '完了', rejected: '却下' }[r.status];
+  const c = el('div', 'order' + (r.status === 'submitted' ? ' paid' : ''));
+  const head = el('div', 'order-head');
+  head.append(el('span', 'pickup', '#' + r.code), el('span', 'status', label), el('span', 'when note', dateTime(r.createdAt)));
+  c.append(head);
+  c.append(el('p', 'meta', '注文番号 ' + no(r.orderNo) + ' / ' + (REASONS[r.reason] || r.reason) + ' / ご希望: ' + (r.wanted === 'refund' ? '返金' : '交換')));
+  const ul = el('ul');
+  for (const i of r.items) ul.append(el('li', null, i.name + ' × ' + i.qty + '（' + yen(i.unitPrice * i.qty) + '）'));
+  c.append(ul, el('p', 'ret-detail', r.detail));
+  const thumbs = el('div', 'thumbs');
+  for (const ph of r.photos) {
+    const b = el('button', 'thumb-btn'); b.type = 'button'; b.setAttribute('aria-label', KIND_LABELS[ph.kind] + 'の写真を拡大');
+    const img = el('img'); img.src = '/api/staff/returns/' + encodeURIComponent(r.id) + '/photos/' + ph.id; img.alt = KIND_LABELS[ph.kind]; img.loading = 'lazy';
+    b.append(img, el('span', 'thumb-kind', KIND_LABELS[ph.kind]));
+    b.onclick = () => { $('photo-big').src = img.src; $('photo-dialog').showModal(); };
+    thumbs.append(b);
+  }
+  c.append(thumbs);
+  if (r.staffNote) c.append(el('p', 'meta', 'お客様へのメッセージ: ' + r.staffNote + (r.decidedBy ? '（' + r.decidedBy + '）' : '')));
+  if (r.status === 'completed' && r.resolution === 'refund') c.append(el('p', 'meta', '返金額 ' + yen(r.refundAmount)));
+  if (isAdmin()) {
+    const actions = el('div', 'actions');
+    const mk = (text, cls, fn) => { const b = el('button', cls, text); b.type = 'button'; b.onclick = fn; actions.append(b); };
+    if (r.status === 'submitted') {
+      mk('承認（返金）', 'primary', () => openReturnDialog(r, 'refund'));
+      mk('承認（交換）', '', () => openReturnDialog(r, 'exchange'));
+      mk('却下', 'ghost danger', () => openReturnDialog(r, 'reject'));
+    } else if (r.status === 'approved') {
+      mk('商品を回収して完了', 'primary', () => openReturnDialog(r, 'complete'));
+    }
+    if (actions.children.length) c.append(actions);
+  }
+  return c;
+}
+
+function openReturnDialog(r, mode) {
+  pendingReturn = { r, mode };
+  const sum = r.items.reduce((a, i) => a + i.unitPrice * i.qty, 0);
+  $('return-title').textContent = { refund: '承認（返金）', exchange: '承認（交換）', reject: '却下', complete: r.resolution === 'refund' ? '商品を回収して返金' : '商品を回収して交換を完了' }[mode] + '　#' + r.code;
+  $('return-info').textContent = {
+    refund: '承認すると、お客様の画面に「商品と購入の証明を持参してください」と表示されます。返金は、商品を回収したときに行います。',
+    exchange: '承認すると、お客様の画面に「商品と購入の証明を持参してください」と表示されます。',
+    reject: '却下の理由を、お客様の画面に表示します。',
+    complete: r.resolution === 'refund' ? '商品を確認して、返金額を入力してください。決済に使われた支払方法へ、すぐに返金されます。取り消せません。' : '交換を終えたら押してください。',
+  }[mode];
+  $('return-note-wrap').hidden = mode === 'complete';
+  $('return-note').value = '';
+  $('return-note').required = mode === 'reject';
+  $('return-amount-wrap').hidden = !(mode === 'complete' && r.resolution === 'refund');
+  $('return-amount').value = String(Math.min(sum, r.orderRefundable));
+  $('return-ok').textContent = mode === 'complete' && r.resolution === 'refund' ? '返金する' : '決定する';
+  $('return-dialog').showModal();
+}
+$('return-dialog').addEventListener('close', async () => {
+  if ($('return-dialog').returnValue !== 'ok' || !pendingReturn) return;
+  const { r, mode } = pendingReturn; pendingReturn = null;
+  try {
+    if (mode === 'complete') await post('/api/staff/returns/' + encodeURIComponent(r.id) + '/complete', r.resolution === 'refund' ? { amount: Number($('return-amount').value) } : {});
+    else await post('/api/staff/returns/' + encodeURIComponent(r.id) + '/decide', { decision: mode, note: $('return-note').value });
+  } catch (e) { alert('処理できませんでした（' + e.message + '）。金額と一覧を確認してください。'); }
+  await loadReturns();
+  refresh();
+});
+$('photo-close').onclick = () => $('photo-dialog').close();
 
 // ---------- お問い合わせ ----------
 let chatThread = null;
@@ -954,6 +1068,7 @@ function setStore() {
   refresh();
   loadProducts();
   loadChat();
+  loadReturns();
 }
 
 $('logout').onclick = async () => { try { await post('/api/staff/logout'); } catch {} location.href = '/staff/login'; };
@@ -973,7 +1088,9 @@ $('logout').onclick = async () => { try { await post('/api/staff/logout'); } cat
   showTab(tab === 'accounts' && !isAdmin() ? 'orders' : tab);
   setInterval(refresh, 3000);
   loadChat();
+  loadReturns();
   setInterval(loadChat, 6000); // 返信待ちの件数と一覧を更新する
+  setInterval(loadReturns, 6000);
   setInterval(() => { if (rotateMinutes() > 0) reloadQrImages(); }, 15000);
 })();
 </script>

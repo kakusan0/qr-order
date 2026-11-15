@@ -19,7 +19,10 @@
     $('store-name').textContent = o.store.name;
     $('contact-link').href = '/contact/' + encodeURIComponent(o.store.id) + '?order=' + encodeURIComponent(o.id);
     $('contact-link').hidden = o.status === 'pending';
+    if (window.rememberOrder && o.status !== 'pending') window.rememberOrder(o.store.id, o.id);
     $('shop-link').href = '/s/' + encodeURIComponent(o.store.id);
+    $('return-link').href = '/return/' + encodeURIComponent(o.id);
+    $('return-link').hidden = o.status === 'pending' || o.status === 'refunded';
     $('shop-link').hidden = o.status === 'pending';
     $('ticket-icon').hidden = !(o.status === 'paid' || o.status === 'handed_over');
     // 支払いが済んだらカートを空にする

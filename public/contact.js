@@ -18,7 +18,6 @@
   } catch {
     return showError('店舗が見つかりません。注文画面からもう一度開いてください。');
   }
-  if (orderId) { $('order-note').textContent = 'ご購入の注文についてのお問い合わせとして送信します。'; $('order-note').hidden = false; }
 
   // やり取りは端末に保存した合言葉で引き継ぐ（会員登録は不要）
   const key = 'chat:' + storeId;
@@ -26,6 +25,42 @@
   try { thread = JSON.parse(localStorage.getItem(key) || 'null'); } catch { /* 保存データが読めなければ新しく始める */ }
   let lastId = 0;
   const seen = new Set();
+
+  // 注文の選択：この端末で購入した注文を一覧にする（支払いが済んだ、この店舗の注文のみ）
+  const select = $('order-select');
+  const pickable = new Map();
+  async function fillOrders() {
+    const ids = [...new Set([orderId, ...(window.rememberedOrders ? window.rememberedOrders(storeId) : [])].filter(Boolean))];
+    const found = [];
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const res = await fetch('/api/orders/' + encodeURIComponent(id), { cache: 'no-store' });
+        if (!res.ok) return;
+        const o = await res.json();
+        if (o.status !== 'pending' && o.store.id === storeId) found.push(o);
+      } catch { /* 取得できない注文は一覧に出さない */ }
+    }));
+    found.sort((a, b) => String(b.paidAt).localeCompare(String(a.paidAt)));
+    for (const o of found) {
+      pickable.set(o.id, o);
+      select.append(new Option('注文番号 ' + String(o.pickupNo ?? '').padStart(3, '0') + '　' + time(o.paidAt || o.createdAt) + '　¥' + o.total.toLocaleString('ja-JP'), o.id));
+    }
+    if (orderId && pickable.has(orderId)) select.value = orderId;
+    $('order-pick').hidden = !found.length || !!thread;
+  }
+  function showThreadState(orderNo) {
+    $('order-pick').hidden = !!thread || pickable.size === 0;
+    $('new-thread').hidden = !thread;
+    $('order-note').hidden = !thread;
+    if (thread) $('order-note').textContent = orderNo ? 'この問い合わせは、注文番号 ' + String(orderNo).padStart(3, '0') + ' についてです。' : 'この問い合わせは、特定の注文に関するものではありません。';
+  }
+  $('new-thread-btn').onclick = () => {
+    thread = null; lastId = 0; seen.clear();
+    try { localStorage.removeItem(key); } catch { /* 無視 */ }
+    select.value = ''; // 前の注文を引き継がず、あらためて選んでもらう
+    $('log').replaceChildren(); $('empty').hidden = false; showThreadState(null);
+  };
+  await fillOrders();
 
   function add(m) {
     if (seen.has(m.id)) return;
@@ -44,7 +79,9 @@
       const res = await fetch('/api/chat/' + encodeURIComponent(thread.threadId) + '?after=' + lastId, { headers: { 'X-Chat-Token': thread.token }, cache: 'no-store' });
       if (res.status === 404) { thread = null; try { localStorage.removeItem(key); } catch { /* 無視 */ } return; } // 保存期間が過ぎて消えた
       if (!res.ok) return;
-      for (const m of (await res.json()).messages) add(m);
+      const body = await res.json();
+      showThreadState(body.orderNo);
+      for (const m of body.messages) add(m);
     } catch { /* 通信できないときは次の機会に取り直す */ }
   }
 
@@ -61,13 +98,14 @@
       const res = await fetch('/api/stores/' + encodeURIComponent(storeId) + '/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ threadId: thread ? thread.threadId : undefined, token: thread ? thread.token : undefined, orderId: orderId || undefined, body: text }),
+        body: JSON.stringify({ threadId: thread ? thread.threadId : undefined, token: thread ? thread.token : undefined, orderId: !thread && select.value ? select.value : undefined, body: text }),
       });
       if (res.status === 429) throw new Error('送信の回数が多すぎます。少し待ってからもう一度お試しください。');
       if (!res.ok) throw new Error('送信できませんでした。もう一度お試しください。');
       const data = await res.json();
       thread = { threadId: data.threadId, token: data.token };
       try { localStorage.setItem(key, JSON.stringify(thread)); } catch { /* 保存できなくても、この画面を開いている間は続けられる */ }
+      showThreadState(select.value ? pickable.get(select.value)?.pickupNo : null);
       add(data.message);
       $('body').value = '';
       $('count').textContent = '0 / 500';
