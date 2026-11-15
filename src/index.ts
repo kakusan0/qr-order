@@ -72,6 +72,8 @@ type OrderRow = {
   age_check_required: number;
   age_checked_at: string | null;
   age_checked_by: string | null;
+  geo_distance_m: number | null;
+  geo_accuracy_m: number | null;
 };
 
 type ItemRow = { order_id: string; name: string; unit_price: number; tax_rate: number; qty: number; age_restricted: number };
@@ -176,6 +178,29 @@ async function qrUrl(origin: string, store: StoreQr, productId?: string): Promis
   if (store.qr_rotate_minutes > 0) url.searchParams.set('t', await qrToken(store));
   return url.toString();
 }
+
+// ---------- 位置情報（GPS） ----------
+// お客様の端末から送られた現在地を、店舗からの距離に変えて使う。位置そのもの（緯度・経度）は保存しない
+const GEO_MAX_ACCURACY_M = 1000;
+type Geo = { lat: number; lng: number; accuracy: number };
+function parseGeo(v: unknown): Geo | null {
+  const g = v as { lat?: unknown; lng?: unknown; accuracy?: unknown } | null;
+  if (!g || typeof g.lat !== 'number' || typeof g.lng !== 'number' || typeof g.accuracy !== 'number') return null;
+  if (!(Math.abs(g.lat) <= 90 && Math.abs(g.lng) <= 180 && g.accuracy >= 0 && g.accuracy <= 100_000)) return null;
+  return { lat: g.lat, lng: g.lng, accuracy: g.accuracy };
+}
+/** 2 点間の距離（メートル） */
+function distanceM(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const r = 6_371_000, rad = Math.PI / 180;
+  const dLat = (bLat - aLat) * rad, dLng = (bLng - aLng) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(aLat * rad) * Math.cos(bLat * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * r * Math.asin(Math.sqrt(h));
+}
+type StoreGeo = { lat: number | null; lng: number | null; geofence_m: number };
+const storeGeo = (env: Env, id: string) => env.DB.prepare(`SELECT lat, lng, geofence_m FROM stores WHERE id = ?`).bind(id).first<StoreGeo>();
+/** 店舗からの距離（店舗の位置が未設定なら null） */
+const geoDistance = (store: StoreGeo | null, g: Geo) =>
+  store && store.lat != null && store.lng != null ? Math.round(distanceM(store.lat, store.lng, g.lat, g.lng)) : null;
 
 const clientIp = (c: C) => c.req.header('CF-Connecting-IP') ?? 'unknown';
 
@@ -453,7 +478,7 @@ app.post('/api/orders', async (c) => {
   if (!(await rateLimit(c.env, 'order', clientIp(c), 30, 300))) return c.json({ error: 'too_many_requests' }, 429);
 
   const body = (await c.req.json().catch(() => null)) as
-    | { storeId?: unknown; items?: unknown; ageConfirmed?: unknown; turnstileToken?: unknown; email?: unknown; pass?: unknown }
+    | { storeId?: unknown; items?: unknown; ageConfirmed?: unknown; turnstileToken?: unknown; email?: unknown; pass?: unknown; geo?: unknown }
     | null;
   if (!body || typeof body.storeId !== 'string' || !Array.isArray(body.items)) return c.json({ error: 'bad_request' }, 400);
   // 購入完了メールの送付先（任意）。入力があるのに形式が不正な場合は、届かないまま進まないよう受け付けない
@@ -481,6 +506,14 @@ app.post('/api/orders', async (c) => {
   // QR の定期更新が有効な店舗では、有効な QR を読み取った端末からしか注文できない
   if (store.qr_rotate_minutes > 0 && !(await validPass(store, body.pass))) return c.json({ error: 'qr_expired' }, 403);
 
+  // 位置情報は必須。店舗の位置が設定されていれば、店舗の近く（設定した範囲＋測位の誤差）でのみ注文できる
+  const geo = parseGeo(body.geo);
+  if (!geo) return c.json({ error: 'location_required' }, 400);
+  if (geo.accuracy > GEO_MAX_ACCURACY_M) return c.json({ error: 'location_inaccurate' }, 400);
+  const sg = await storeGeo(c.env, store.id);
+  const geoDist = geoDistance(sg, geo);
+  if (geoDist != null && geoDist > sg!.geofence_m + geo.accuracy) return c.json({ error: 'out_of_store' }, 403);
+
   // 金額は必ずサーバー側の価格から計算する
   const ids = [...qty.keys()];
   const { results: products } = await c.env.DB.prepare(
@@ -500,8 +533,8 @@ app.post('/api/orders', async (c) => {
   const orderId = crypto.randomUUID();
   await c.env.DB.batch([
     c.env.DB.prepare(
-      `INSERT INTO orders (id, store_id, total, created_at, age_check_required, receipt_email, origin) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(orderId, store.id, total, nowIso(), ageCheck ? 1 : 0, receiptEmail || null, new URL(c.req.url).origin),
+      `INSERT INTO orders (id, store_id, total, created_at, age_check_required, receipt_email, origin, geo_distance_m, geo_accuracy_m) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(orderId, store.id, total, nowIso(), ageCheck ? 1 : 0, receiptEmail || null, new URL(c.req.url).origin, geoDist, Math.round(geo.accuracy)),
     ...products.map((p) =>
       c.env.DB.prepare(
         `INSERT INTO order_items (order_id, product_id, name, unit_price, tax_rate, qty, age_restricted) VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -1180,8 +1213,26 @@ app.get('/staff/product-qr.svg', async (c) => {
 app.get('/staff/display', (c) => c.html(displayHtml, 200, { 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' }));
 
 app.get('/api/staff/stores', async (c) => {
-  const { results } = await c.env.DB.prepare(`SELECT id, name, qr_rotate_minutes AS qrRotateMinutes FROM stores ORDER BY id`).all();
+  const { results } = await c.env.DB.prepare(`SELECT id, name, qr_rotate_minutes AS qrRotateMinutes, lat, lng, geofence_m AS geofence FROM stores ORDER BY id`).all();
   return c.json({ stores: results });
+});
+
+// 店舗の位置（購入時の GPS の確認に使う）。管理者が店舗の中で「この端末の現在地」を登録する
+app.post('/api/staff/stores/:id/location', adminOnly, async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { geo?: unknown; radius?: unknown; clear?: unknown } | null;
+  const radius = body?.radius;
+  if (typeof radius !== 'number' || ![50, 100, 200, 300, 500, 1000].includes(radius)) return c.json({ error: 'bad_request' }, 400);
+  if (body?.clear === true) {
+    await c.env.DB.prepare(`UPDATE stores SET lat = NULL, lng = NULL, geofence_m = ? WHERE id = ?`).bind(radius, c.req.param('id')).run();
+    return c.json({ ok: true });
+  }
+  const geo = body?.geo === undefined ? null : parseGeo(body.geo);
+  if (body?.geo !== undefined && (!geo || geo.accuracy > 200)) return c.json({ error: 'location_inaccurate' }, 400);
+  const res = geo
+    ? await c.env.DB.prepare(`UPDATE stores SET lat = ?, lng = ?, geofence_m = ? WHERE id = ?`).bind(geo.lat, geo.lng, radius, c.req.param('id')).run()
+    : await c.env.DB.prepare(`UPDATE stores SET geofence_m = ? WHERE id = ?`).bind(radius, c.req.param('id')).run();
+  if (res.meta.changes !== 1) return c.json({ error: 'store_not_found' }, 404);
+  return c.json({ ok: true });
 });
 
 // QR コードの更新間隔（分）。0 で更新しない
@@ -1229,6 +1280,8 @@ app.get('/api/staff/orders', async (c) => {
       ageCheckRequired: o.age_check_required === 1,
       ageCheckedAt: o.age_checked_at,
       ageCheckedBy: o.age_checked_by,
+      geoDistance: o.geo_distance_m,
+      geoAccuracy: o.geo_accuracy_m,
       items: items
         .filter((i) => i.order_id === o.id)
         .map((i) => ({ name: i.name, qty: i.qty, ageRestricted: i.age_restricted === 1 })),
@@ -1311,7 +1364,7 @@ const returnWindowDays = (env: Env) => Math.min(Math.max(Number(env.RETURN_WINDO
 
 type ReturnRow = {
   id: string; order_id: string; store_id: string; code: string; reason: string; detail: string; wanted: string; status: string;
-  resolution: string | null; refund_amount: number; staff_note: string | null; decided_by: string | null; decided_at: string | null;
+  resolution: string | null; refund_amount: number; staff_note: string | null; decided_by: string | null; decided_at: string | null; geo_distance_m: number | null; geo_accuracy_m: number | null;
   completed_at: string | null; created_at: string;
 };
 
@@ -1372,8 +1425,11 @@ app.post('/api/orders/:id/returns', async (c) => {
   if (Date.now() > deadline) return c.json({ error: 'window_closed' }, 409);
 
   const body = (await c.req.json().catch(() => null)) as {
-    reason?: unknown; detail?: unknown; wanted?: unknown; agree?: unknown; items?: unknown; photos?: unknown;
+    reason?: unknown; detail?: unknown; wanted?: unknown; agree?: unknown; items?: unknown; photos?: unknown; geo?: unknown;
   } | null;
+  const geo = parseGeo(body?.geo);
+  if (!geo) return c.json({ error: 'location_required' }, 400);
+  if (geo.accuracy > GEO_MAX_ACCURACY_M) return c.json({ error: 'location_inaccurate' }, 400);
   const reason = RETURN_REASONS.find((r) => r === body?.reason);
   const wanted = body?.wanted === 'refund' || body?.wanted === 'exchange' ? body.wanted : null;
   const detail = typeof body?.detail === 'string' ? body.detail.replace(/\r\n?/g, '\n').trim() : '';
@@ -1413,8 +1469,8 @@ app.post('/api/orders/:id/returns', async (c) => {
   const now = nowIso();
   await c.env.DB.batch([
     c.env.DB.prepare(
-      `INSERT INTO returns (id, order_id, store_id, code, reason, detail, wanted, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(id, order.id, order.store_id, code, reason, detail, wanted, now),
+      `INSERT INTO returns (id, order_id, store_id, code, reason, detail, wanted, created_at, geo_distance_m, geo_accuracy_m) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(id, order.id, order.store_id, code, reason, detail, wanted, now, geoDistance(await storeGeo(c.env, order.store_id), geo), Math.round(geo.accuracy)),
     ...[...chosen].map(([productId, qty]) =>
       c.env.DB.prepare(`INSERT INTO return_items (return_id, product_id, name, unit_price, qty) VALUES (?, ?, ?, ?, ?)`).bind(
         id, productId, available.get(productId)!.name, available.get(productId)!.unitPrice, qty,
@@ -1447,7 +1503,7 @@ app.get('/api/staff/returns', async (c) => {
   const out = [];
   for (const r of results) {
     const { results: photos } = await c.env.DB.prepare(`SELECT id, kind FROM return_photos WHERE return_id = ? ORDER BY id`).bind(r.id).all();
-    out.push({ ...(await returnJson(c.env, r)), orderNo: r.orderNo, orderTotal: r.orderTotal, orderRefundable: r.orderTotal - r.orderRefunded, orderId: r.order_id, decidedBy: r.decided_by, photos });
+    out.push({ ...(await returnJson(c.env, r)), orderNo: r.orderNo, orderTotal: r.orderTotal, orderRefundable: r.orderTotal - r.orderRefunded, orderId: r.order_id, decidedBy: r.decided_by, geoDistance: r.geo_distance_m, geoAccuracy: r.geo_accuracy_m, photos });
   }
   c.header('Cache-Control', 'no-store');
   return c.json({ returns: out });

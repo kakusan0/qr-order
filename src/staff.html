@@ -215,6 +215,19 @@
       <p class="note">お客様がこの QR を読み取ると注文画面（カート）が開きます。クリックで印刷用に開きます。</p>
       <p><a id="display-link" href="#" target="_blank" rel="noopener">表示専用の画面を開く（入口のタブレットなどに映す用）</a></p>
 
+      <h2>店舗の位置（購入時の位置情報の確認）</h2>
+      <div class="card form narrow">
+        <p id="geo-store-state" class="note"></p>
+        <label>お支払いを受け付ける範囲（店舗の位置からの距離）
+          <select id="geo-radius">
+            <option value="50">50m</option><option value="100">100m</option><option value="200">200m</option><option value="300">300m</option><option value="500">500m</option><option value="1000">1km</option>
+          </select>
+        </label>
+        <div class="actions" data-admin hidden><button id="geo-set" type="button" class="primary">この端末の現在地を店舗の位置にする</button><button id="geo-clear" type="button" class="ghost danger">位置を削除</button></div>
+        <p class="note">店舗の中で、この端末（スマートフォンなど）を使って登録してください。お客様は、お支払いのときに必ず位置情報の確認が必要です。店舗の位置を登録すると、その範囲（＋測位の誤差）の外からはお支払いできなくなります。屋内では GPS の誤差が大きくなるため、範囲は 200m 以上をおすすめします。</p>
+        <p id="geo-store-error" class="error" hidden></p>
+      </div>
+
       <h2>QR コードの更新</h2>
       <div class="card form narrow">
         <label>更新する間隔
@@ -440,6 +453,8 @@ function orderCard(o) {
   if (o.refundedAmount > 0 && o.status !== 'refunded') meta.push('一部返金済 ' + yen(o.refundedAmount));
   if (o.status === 'refunded') meta.push('返金額 ' + yen(o.refundedAmount));
   if (o.ageCheckedBy) meta.push('年齢確認: ' + o.ageCheckedBy);
+  if (o.geoDistance != null) meta.push('支払い時: 店舗から' + distLabel(o.geoDistance) + '（誤差 ±' + o.geoAccuracy + 'm）');
+  else if (o.geoAccuracy != null) meta.push('支払い時: 位置を確認済み（店舗の位置は未登録）');
   if (meta.length) c.append(el('p', 'meta', meta.join(' / ')));
 
   if (o.ageCheckRequired && o.status !== 'refunded') {
@@ -654,6 +669,7 @@ function returnCard(r) {
     thumbs.append(b);
   }
   c.append(thumbs);
+  c.append(el('p', 'meta', r.geoDistance != null ? '申し込み時: 店舗から' + distLabel(r.geoDistance) + '（誤差 ±' + r.geoAccuracy + 'm）' : r.geoAccuracy != null ? '申し込み時: 位置を確認済み（店舗の位置は未登録）' : '申し込み時の位置: 記録なし'));
   if (r.staffNote) c.append(el('p', 'meta', 'お客様へのメッセージ: ' + r.staffNote + (r.decidedBy ? '（' + r.decidedBy + '）' : '')));
   if (r.status === 'completed' && r.resolution === 'refund') c.append(el('p', 'meta', '返金額 ' + yen(r.refundAmount)));
   if (isAdmin()) {
@@ -1058,12 +1074,53 @@ $('qr-rotation').onchange = async () => {
   reloadQrImages();
 };
 
+// ---------- 店舗の位置 ----------
+const distLabel = (m) => m == null ? '' : m >= 1000 ? '約 ' + (m / 1000).toFixed(1) + 'km' : '約 ' + m + 'm';
+function showStoreGeo() {
+  const st = storeInfo();
+  if (!st) return;
+  $('geo-radius').value = String(st.geofence || 200);
+  $('geo-radius').disabled = !isAdmin();
+  $('geo-clear').hidden = st.lat == null;
+  $('geo-store-state').textContent = st.lat == null
+    ? '店舗の位置が未登録です。お客様の位置情報は確認しますが、店舗から離れていてもお支払いできます。'
+    : '登録済みです。店舗から ' + distLabel(st.geofence) + '（＋測位の誤差）の範囲でのみ、お支払いを受け付けます。';
+}
+async function saveStoreGeo(body) {
+  $('geo-store-error').hidden = true;
+  try {
+    await post('/api/staff/stores/' + encodeURIComponent($('store').value) + '/location', { radius: Number($('geo-radius').value), ...body });
+    const { stores } = await api('/api/staff/stores'); storeList = stores;
+  } catch (e) {
+    $('geo-store-error').textContent = e.message === 'location_inaccurate' ? '現在地の誤差が大きすぎます（200m 以内が必要）。窓の近くや店舗の入口で、もう一度お試しください。' : '保存できませんでした（' + e.message + '）。';
+    $('geo-store-error').hidden = false;
+  }
+  showStoreGeo();
+}
+$('geo-set').onclick = async () => {
+  if (!navigator.geolocation) return alert('この端末では位置情報を使えません。');
+  $('geo-set').disabled = true;
+  navigator.geolocation.getCurrentPosition(
+    async (p) => {
+      if (confirm('現在地（誤差 約 ' + Math.round(p.coords.accuracy) + 'm）を店舗の位置として登録します。店舗の中にいますか？')) {
+        await saveStoreGeo({ geo: { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: Math.round(p.coords.accuracy) } });
+      }
+      $('geo-set').disabled = false;
+    },
+    () => { alert('現在地を取得できませんでした。位置情報の利用を許可してください。'); $('geo-set').disabled = false; },
+    { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+  );
+};
+$('geo-clear').onclick = () => { if (confirm('店舗の位置を削除します。お客様がどこからでもお支払いできるようになります。よろしいですか？')) saveStoreGeo({ clear: true }); };
+$('geo-radius').onchange = () => saveStoreGeo({});
+
 function setStore() {
   const s = encodeURIComponent($('store').value);
   $('qr').src = '/staff/qr.svg?store=' + s + '&_=' + Date.now();
   $('qr-link').href = '/staff/qr.svg?store=' + s;
   $('display-link').href = '/staff/display?store=' + s;
   showRotation();
+  showStoreGeo();
   stopEdit();
   refresh();
   loadProducts();

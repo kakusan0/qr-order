@@ -415,3 +415,12 @@ tr.sum td:last-child { font-size: 1.6rem; font-weight: 900; letter-spacing: -.02
 .cam-shot { width: 72px; min-height: 72px; height: 72px; padding: 0; border-radius: 50%; border: 4px solid #fff !important; background: transparent !important; display: grid; place-items: center; }
 .cam-shot span { width: 54px; height: 54px; border-radius: 50%; background: #fff; }
 .cam-shot:active span { transform: scale(.9); }
+
+/* 位置情報（GPS）の確認 */
+.geo-box { display: grid; gap: 8px; margin: 14px 0 0; padding: 12px 14px; border-radius: var(--r-md); border: 1px solid var(--line); background: color-mix(in srgb, var(--text) 3%, var(--card)); font-size: .88rem; }
+.geo-box p { margin: 0; }
+.geo-box.need { border: 2px solid var(--warn); }
+.geo-box button { justify-self: start; }
+.geo-state { font-weight: 700; color: var(--muted); }
+.geo-state.ok { color: var(--accent); }
+.geo-state.ng { color: var(--warn); }

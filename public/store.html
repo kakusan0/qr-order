@@ -21,6 +21,7 @@
 <script src="/ocr.js" defer></script>
 <script src="/scanview.js" defer></script>
 <script src="/orders-local.js" defer></script>
+<script src="/geo.js" defer></script>
 <script src="/store.js" defer></script>
 </head>
 <body>
@@ -79,7 +80,12 @@
         <div id="turnstile"></div>
         <div id="pay"></div>
         <p id="agree" class="note agree" hidden>下の「支払う」ボタンを押すと、上記の内容でご注文が確定し、お支払いが行われます。押す前に内容をご確認ください。ボタンを押した時点で、<a href="/legal/terms" target="_blank" rel="noopener">利用規約</a>と<a href="/legal/privacy" target="_blank" rel="noopener">プライバシーポリシー</a>に同意したものとします。販売事業者・返品などの条件は<a href="/legal/tokushoho" target="_blank" rel="noopener">特定商取引法に基づく表記</a>をご覧ください。</p>
-        <button id="pay-button" class="primary wide" hidden>支払う</button>
+          <div id="geo-box" class="geo-box">
+        <p><strong>お支払いには、現在地（位置情報）の確認が必要です。</strong>店舗の外からの不正な注文を防ぐため、店舗の近くにいることを確認します。確認できない場合はお支払いいただけません。保存するのは店舗からの距離だけで、位置そのもの（緯度・経度）は保存しません（<a href="/legal/privacy" target="_blank" rel="noopener">プライバシーポリシー</a>）。</p>
+        <p id="geo-state" class="geo-state" aria-live="polite">まだ確認していません。</p>
+        <button id="geo-check" type="button">現在地を確認する</button>
+      </div>
+      <button id="pay-button" class="primary wide" hidden>支払う</button>
         <p id="pay-note" class="note" hidden></p>
       </div>
     </section>

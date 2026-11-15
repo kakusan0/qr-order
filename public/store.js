@@ -262,8 +262,37 @@
     if (turnstileWidget !== null && window.turnstile) window.turnstile.reset(turnstileWidget);
   }
 
+  // --- 位置情報（GPS）：お支払いの前に確認する ---
+  let geo = null;
+  async function checkGeo(quiet) {
+    $('geo-state').textContent = '現在地を確認しています…';
+    $('geo-state').className = 'geo-state';
+    try {
+      geo = await window.getGeo(300000);
+      $('geo-state').textContent = '確認しました（誤差 約 ' + geo.accuracy + 'm）。';
+      $('geo-state').className = 'geo-state ok';
+      $('geo-box').classList.remove('need');
+      return true;
+    } catch (e) {
+      geo = null;
+      $('geo-state').textContent = e.message;
+      $('geo-state').className = 'geo-state ng';
+      if (!quiet) $('geo-box').classList.add('need');
+      return false;
+    }
+  }
+  $('geo-check').onclick = () => checkGeo(false);
+
   async function pay() {
     if (paying || !elements || cart.size === 0) return;
+    // 位置の確認が済んでいない（または古い）ときは、先に確認してもらう。決済の画面はボタンを押した直後に開く必要があるため、ここでは待たない
+    if (!geo || Date.now() - geo.at > 300000) {
+      showError('お支払いの前に「現在地を確認する」を押して、位置情報を確認してください。');
+      $('geo-box').classList.add('need');
+      $('geo-box').scrollIntoView({ block: 'center' });
+      checkGeo(false);
+      return;
+    }
     if (!hasPass()) {
       showGate();
       showError('ご注文には、店頭に表示されている QR コードの読み取りが必要です。');
@@ -302,12 +331,16 @@
           ageConfirmed: hasRestricted() ? $('age-ok').checked : undefined,
           turnstileToken: turnstileToken || undefined,
           pass: pass || undefined,
+          geo: window.geoPayload(geo),
           email: $('receipt-email').value.trim() || undefined,
         }),
       });
       resetTurnstile(); // 確認結果は 1 回しか使えない
       if (!res.ok) {
         if (res.status === 400 && (await res.clone().json().catch(() => ({}))).error === 'bad_email') throw new Error('メールアドレスの形式を確認してください。お支払いは発生していません。');
+        const errCode = res.status === 400 || res.status === 403 ? (await res.clone().json().catch(() => ({}))).error : '';
+        if (errCode === 'out_of_store') throw new Error('店舗の近くでのみお支払いいただけます。店内で「現在地を確認する」を押してから、もう一度お試しください。お支払いは発生していません。');
+        if (errCode === 'location_required' || errCode === 'location_inaccurate') { geo = null; throw new Error('現在地を正確に確認できませんでした。端末の位置情報（GPS）をオンにし、「現在地を確認する」を押してから、もう一度お試しください。お支払いは発生していません。'); }
         if (res.status === 429) throw new Error('注文が集中しています。少し待ってからもう一度お試しください。お支払いは発生していません。');
         if (res.status === 403) {
           if ((await res.clone().json().catch(() => ({}))).error === 'qr_expired') {
@@ -575,7 +608,7 @@
   const onScroll = () => segWrap.classList.toggle('stuck', segWrap.getBoundingClientRect().top <= 0);
   window.addEventListener('scroll', onScroll, { passive: true });
   $('tab-scan').onclick = () => setView('scan', -1);
-  $('tab-cart').onclick = () => setView('cart', 1);
+  $('tab-cart').onclick = () => { setView('cart', 1); if (!geo && cart.size) checkGeo(true); };
 
   (() => {
     const area = $('shop');
@@ -599,7 +632,7 @@
     area.addEventListener('touchcancel', () => { tracking = false; }, { passive: true });
   })();
 
-  $('cart-bar-go').onclick = () => { setView('cart', 1); $('confirm').scrollIntoView({ behavior: 'smooth' }); };
+  $('cart-bar-go').onclick = () => { setView('cart', 1); $('confirm').scrollIntoView({ behavior: 'smooth' }); if (!geo) checkGeo(true); };
   $('scan-open').onclick = startScan;
   $('scan-close').onclick = stopScan;
   $('scan-switch').onclick = switchCamera;

@@ -173,6 +173,21 @@
   $('cam-dialog').addEventListener('close', stopCamera);
   document.addEventListener('visibilitychange', () => { if (document.hidden && $('cam-dialog').open) $('cam-dialog').close(); });
 
+  // ---- 位置情報（GPS） ----
+  let geo = null;
+  async function checkGeo() {
+    $('geo-state').textContent = '現在地を確認しています…'; $('geo-state').className = 'geo-state';
+    try {
+      geo = await window.getGeo(300000);
+      $('geo-state').textContent = '確認しました（誤差 約 ' + geo.accuracy + 'm）。'; $('geo-state').className = 'geo-state ok'; $('geo-box').classList.remove('need');
+      return true;
+    } catch (e) {
+      geo = null; $('geo-state').textContent = e.message; $('geo-state').className = 'geo-state ng'; $('geo-box').classList.add('need');
+      return false;
+    }
+  }
+  $('geo-check').onclick = checkGeo;
+
   const reason = () => document.querySelector('input[name=reason]:checked').value;
   const showTips = () => { $('photo-tips').textContent = TIPS[reason()]; };
   for (const r of document.querySelectorAll('input[name=reason]')) r.onchange = showTips;
@@ -187,6 +202,7 @@
     if (photos.length < MIN_PHOTOS) return showError('写真は ' + MIN_PHOTOS + ' 枚以上必要です。不具合の箇所やラベルも撮ってください。');
     if (!$('agree').checked) return showError('「ご確認」にチェックを入れてください。');
     $('submit').disabled = true;
+    if (!(await checkGeo())) { $('submit').disabled = false; $('geo-box').scrollIntoView({ block: 'center' }); return showError('お申し込みには、位置情報の確認が必要です。「現在地を確認する」の下の案内をご確認ください。'); }
     try {
       const res = await fetch('/api/orders/' + encodeURIComponent(orderId) + '/returns', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -194,6 +210,7 @@
           reason: reason(), detail: $('detail').value, wanted: document.querySelector('input[name=wanted]:checked').value, agree: true,
           items: [...picks].map(([productId, sel]) => ({ productId, qty: Number(sel.value) })),
           photos: photos.map((p) => ({ kind: p.kind, data: p.data })),
+          geo: window.geoPayload(geo),
         }),
       });
       if (!res.ok) {
@@ -201,6 +218,7 @@
         throw new Error(code === 'too_many_requests' ? '申し込みの回数が多すぎます。しばらくしてからお試しください。'
           : code === 'window_closed' ? '申込期限を過ぎています。'
           : code === 'items_unavailable' ? '選んだ商品は、すでに申し込まれています。画面を開き直してください。'
+          : code === 'location_required' || code === 'location_inaccurate' ? '現在地を正確に確認できませんでした。端末の位置情報（GPS）をオンにして、もう一度お試しください。'
           : code === 'too_many_open' ? '確認中・対応中の申し込みが多いため、これ以上は受け付けられません。'
           : '申し込めませんでした。入力内容と写真を確認して、もう一度お試しください。');
       }

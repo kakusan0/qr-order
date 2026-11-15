@@ -11,6 +11,7 @@
 <meta name="theme-color" content="#101311" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/icons/app-192.png">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<script src="/geo.js" defer></script>
 <script src="/return.js" defer></script>
 </head>
 <body class="return-page">
@@ -73,6 +74,11 @@
 
     <fieldset class="card">
       <legend>6. ご確認</legend>
+      <div id="geo-box" class="geo-box">
+        <p><strong>お申し込みには、現在地（位置情報）の確認が必要です。</strong>不正なお申し込みを防ぐため、お申し込みの時点で店舗からどのくらい離れているかを記録します（場所によって申し込めなくなることはありません）。保存するのは店舗からの距離だけで、位置そのもの（緯度・経度）は保存しません（<a href="/legal/privacy" target="_blank" rel="noopener">プライバシーポリシー</a>）。</p>
+        <p id="geo-state" class="geo-state" aria-live="polite">まだ確認していません。</p>
+        <button id="geo-check" type="button">現在地を確認する</button>
+      </div>
       <label class="radio check"><input type="checkbox" id="agree"> <span>商品は捨てたり使い切ったりせず、保管します。承認されたら、商品と購入の証明の画面を店頭にお持ちします。</span></label>
     </fieldset>
 
