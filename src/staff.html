@@ -228,6 +228,8 @@
       <p><a id="qr-link" href="#" target="_blank" rel="noopener"><img id="qr" alt="店舗QRコード" width="240" height="240"></a></p>
       <p class="note">お客様がこの QR を読み取ると注文画面（カート）が開きます。クリックで印刷用に開きます。</p>
       <p><a id="display-link" href="#" target="_blank" rel="noopener">表示専用の画面を開く（入口のタブレットなどに映す用）</a></p>
+      <p><a id="shop-test-link" href="#" target="_blank" rel="noopener">お客様の画面を開く（スタッフ用：画面内の QR を読み取れます）</a></p>
+      <p class="note">管理画面から開いたときだけ、お客様の画面に「画面から読み取る」「画像から読み取る」が表示されます。この画面に映した商品 QR などを、カメラを使わずにカートへ入れて試せます。</p>
 
       <h2>店舗の位置（購入時の位置情報の確認）</h2>
       <div class="card form geo-card">
@@ -1224,6 +1226,7 @@ function setStore() {
   const s = encodeURIComponent($('store').value);
   $('qr').src = '/staff/qr.svg?store=' + s + '&_=' + Date.now();
   $('qr-link').href = '/staff/qr.svg?store=' + s;
+  $('shop-test-link').href = '/s/' + s + '?from=staff';
   $('display-link').href = '/staff/display?store=' + s;
   showRotation();
   resetGeoMap();

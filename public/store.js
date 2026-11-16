@@ -445,6 +445,17 @@
   const video = $('scan-video');
   const canvas = document.createElement('canvas');
   let stream = null, raf = 0, lastText = '', lastSeen = 0, lastHit = 0, scanSession = 0;
+  // スタッフ用：この端末の画面を共有して読み取る（枠ではなく画面全体を読む）
+  let screenMode = false, screenTimer = 0;
+  /** 映像（または画像）の全体を canvas に描く。大きすぎる画面は長辺 1600px に縮める */
+  function drawFull(src, w, h) {
+    const scale = Math.min(1, 1600 / Math.max(w, h));
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+    return ctx;
+  }
 
   // 読み取り中の表示
   function live(msg, ok, ng) {
@@ -462,6 +473,9 @@
 
   function stopScan() {
     cancelAnimationFrame(raf);
+    clearTimeout(screenTimer);
+    screenMode = false;
+    $('scanner').classList.remove('screen');
     if (stream) stream.getTracks().forEach((t) => t.stop());
     stream = null;
     video.srcObject = null;
@@ -475,9 +489,10 @@
   function tick() {
     if (!stream) return;
     if (video.readyState >= 2 && video.videoWidth) {
-      const ctx = window.drawScanRegion(video, $('scan-guide'), canvas); // 枠の中だけを読み取る
+      // カメラは枠の中だけ、画面の共有は画面全体を読み取る
+      const ctx = screenMode ? drawFull(video, video.videoWidth, video.videoHeight) : window.drawScanRegion(video, $('scan-guide'), canvas);
       const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const qr = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+      const qr = window.jsQR(img.data, img.width, img.height, { inversionAttempts: screenMode ? 'attemptBoth' : 'dontInvert' });
       // QR が写っていなければ、商品バーコードとして読む
       const text = (qr && qr.data) || (window.readBarcode ? window.readBarcode(canvas) : null);
       if (text) {
@@ -492,7 +507,7 @@
         lastText = text;
         lastSeen = now;
         lastHit = now;
-      } else if (window.readDigits && !window.ocrBusy() && Date.now() - lastHit > 1500) {
+      } else if (!screenMode && window.readDigits && !window.ocrBusy() && Date.now() - lastHit > 1500) {
         // 線が読めないときは、バーコードの下の数字を文字認識で読む。登録済みの商品の番号と一致したときだけ使う
         const session = scanSession;
         window.readDigits(canvas, (info) => {
@@ -513,7 +528,50 @@
         });
       }
     }
-    raf = requestAnimationFrame(tick);
+    // 画面の共有中は、管理画面などを見ていて（このタブが隠れていて）も読み取りを続ける
+    if (screenMode) screenTimer = setTimeout(tick, 250);
+    else raf = requestAnimationFrame(tick);
+  }
+
+  async function startScreenScan() {
+    unlockAudio();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      return notice('この端末では画面の読み取りができません。スクリーンショットを「画像から読み取る」で選んでください。', true);
+    }
+    if (stream) stopScan();
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    } catch {
+      return notice('画面の共有が許可されませんでした。', true);
+    }
+    screenMode = true;
+    stream.getVideoTracks()[0].addEventListener('ended', () => { if (screenMode) stopScan(); }); // ブラウザの「共有を停止」
+    lastText = '';
+    lastHit = Date.now();
+    scanSession++;
+    $('scanner').classList.add('on', 'screen');
+    $('scan-close').hidden = false;
+    $('scan-close').textContent = '画面の読み取りを止める';
+    $('scan-open').hidden = true;
+    live('共有した画面から QR コードを探しています…');
+    $('scan-status').textContent = '共有した画面の全体から読み取ります。読み取ると音が鳴り、カートに入ります。';
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    tick();
+  }
+
+  async function scanImage(file) {
+    unlockAudio();
+    let bmp;
+    try { bmp = await createImageBitmap(file); } catch { return notice('この画像を読み込めませんでした。', true); }
+    const ctx = drawFull(bmp, bmp.width, bmp.height);
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const qr = window.jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
+    const text = (qr && qr.data) || (window.readBarcode ? window.readBarcode(canvas) : null);
+    if (!text) return notice('画像から QR コード・バーコードが見つかりませんでした。', true);
+    live(/^\d+$/.test(text) ? 'バーコード: ' + text : describeQr(text), true);
+    await handleCode(text);
+    $('scan-status').textContent = $('toast-text').textContent;
   }
 
   // 使うカメラ（背面 / 前面）。選んだ向きは次回も使う
@@ -632,15 +690,29 @@
 
   $('cart-bar-go').onclick = () => { setView('cart', 1); $('confirm').scrollIntoView({ behavior: 'smooth' }); if (!geo) checkGeo(true); };
   $('scan-open').onclick = startScan;
-  $('scan-close').onclick = stopScan;
+  $('scan-close').onclick = () => { stopScan(); $('scan-close').textContent = 'カメラを止める'; };
   $('scan-switch').onclick = switchCamera;
-  document.addEventListener('visibilitychange', () => { if (document.hidden && stream) stopScan(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && stream && !screenMode) stopScan(); });
   $('scan-open').hidden = false;
 
   // 標準カメラアプリで商品 QR を読み取って開いた場合（/s/<店舗>?add=<商品ID>）
   const params = new URLSearchParams(location.search);
   const add = params.get('add'), token = params.get('t');
-  if (add || token) history.replaceState(null, '', location.pathname); // 再読み込みで二重に追加しない・古い合言葉を残さない
+  if (add || token || params.has('from')) history.replaceState(null, '', location.pathname); // 再読み込みで二重に追加しない・古い合言葉を残さない
+
+  // スタッフ用の読み取り：店舗管理画面から開いた（?from=staff）うえで、管理画面にログインしている場合だけ使える
+  const staffKey = 'staffTools:' + storeId;
+  let fromStaff = params.get('from') === 'staff';
+  try { if (fromStaff) sessionStorage.setItem(staffKey, '1'); else fromStaff = sessionStorage.getItem(staffKey) === '1'; } catch { /* このタブを開いている間だけ */ }
+  if (fromStaff) {
+    fetch('/api/staff/me', { cache: 'no-store' }).then((r) => {
+      if (!r.ok) return;
+      $('staff-tools').hidden = false;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) $('screen-scan').hidden = true;
+      $('screen-scan').onclick = startScreenScan;
+      $('image-scan').onchange = async () => { const f = $('image-scan').files && $('image-scan').files[0]; $('image-scan').value = ''; if (f) await scanImage(f); };
+    }).catch(() => {});
+  }
   render();
   const entered = rotation && token ? await redeem(token) : true;
   if (rotation && token && !entered && !hasPass()) expired();
