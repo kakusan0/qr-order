@@ -1423,25 +1423,50 @@ async function refundOrder(env: Env, orderId: string, amountIn: unknown, request
   }
   const requestId = typeof requestIdIn === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(requestIdIn) ? requestIdIn : crypto.randomUUID();
 
-  const reserve = await env.DB.prepare(
-    `UPDATE orders SET refunded_amount = refunded_amount + ?1
-     WHERE id = ?2 AND status IN ('paid', 'handed_over') AND refunded_amount + ?1 <= total`,
-  )
-    .bind(amount, order.id)
-    .run();
-  if (reserve.meta.changes !== 1) return { ok: false, status: 409, error: 'not_refundable' };
+  // 同じ操作（同じ識別子）がすでに記録されていれば、その結果を返す（通信の再送などで二重に返金しない）
+  const already = async () => {
+    const prev = await env.DB.prepare(`SELECT amount FROM refunds WHERE order_id = ? AND request_id = ?`).bind(order.id, requestId).first<{ amount: number }>();
+    if (!prev) return null;
+    const cur = await getOrder(env, order.id);
+    return { ok: true as const, refunded: prev.amount, remaining: cur ? cur.total - cur.refunded_amount : 0 };
+  };
+  const done = await already();
+  if (done) return done;
+
+  // 返金の記録（識別子は注文ごとに一意）と、返金額の確保を、まとめて行う
+  const refundId = crypto.randomUUID();
+  const now = nowIso();
+  try {
+    const [, reserve] = await env.DB.batch([
+      env.DB.prepare(`INSERT INTO refunds (id, order_id, amount, staff, created_at, request_id) VALUES (?, ?, ?, ?, ?, ?)`).bind(refundId, order.id, amount, staff, now, requestId),
+      env.DB.prepare(
+        `UPDATE orders SET refunded_amount = refunded_amount + ?1
+         WHERE id = ?2 AND status IN ('paid', 'handed_over') AND refunded_amount + ?1 <= total`,
+      ).bind(amount, order.id),
+    ]);
+    if (reserve.meta.changes !== 1) {
+      await env.DB.prepare(`DELETE FROM refunds WHERE id = ?`).bind(refundId).run();
+      return { ok: false, status: 409, error: 'not_refundable' };
+    }
+  } catch (e) {
+    // 同じ識別子の操作が同時に届いた（先に届いた方が処理している）
+    const prev = await already();
+    if (prev) return prev;
+    throw e;
+  }
 
   try {
     await stripe(env, 'POST', '/refunds', { payment_intent: order.payment_intent_id, amount: String(amount) }, `refund-${order.id}-${requestId}`);
   } catch (e) {
-    await env.DB.prepare(`UPDATE orders SET refunded_amount = refunded_amount - ? WHERE id = ?`).bind(amount, order.id).run();
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE orders SET refunded_amount = refunded_amount - ? WHERE id = ?`).bind(amount, order.id),
+      env.DB.prepare(`DELETE FROM refunds WHERE id = ?`).bind(refundId),
+    ]);
     console.error(e);
     return { ok: false, status: 502, error: 'payment_provider_error' };
   }
 
-  const now = nowIso();
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO refunds (id, order_id, amount, staff, created_at) VALUES (?, ?, ?, ?, ?)`).bind(crypto.randomUUID(), order.id, amount, staff, now),
     // 全額を返金し終えたら「返金済」にする
     env.DB.prepare(
       `UPDATE orders SET refunded_at = ?1, status = CASE WHEN refunded_amount >= total THEN 'refunded' ELSE status END WHERE id = ?2`,
