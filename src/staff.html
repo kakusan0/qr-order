@@ -139,11 +139,10 @@
 body.tc-scanning .product-admin img { cursor: crosshair; outline: 3px dashed var(--accent); outline-offset: 4px; border-radius: 6px; }
 body.tc-scanning #tc-scan { background: var(--warn); border-color: var(--warn); }
 
-/* お客様画面の URL */
-.customer-url { display: grid; gap: 8px; margin: 8px 0 12px; }
-.customer-url .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.customer-url input { flex: 1 1 240px; min-width: 0; font-family: ui-monospace, Menlo, monospace; font-size: .9rem; }
-.customer-url .button-link { display: inline-flex; align-items: center; }
+/* お客様画面の URL（入口用 QR の欄と同じ、見出し・リンク・説明の並び） */
+.customer-url { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.customer-url a { word-break: break-all; }
+.customer-url button { min-height: 36px; padding: 0 14px; }
 </style>
 </head>
 <body>
@@ -262,12 +261,11 @@ body.tc-scanning #tc-scan { background: var(--warn); border-color: var(--warn); 
     <section data-panel="qr" hidden>
       <h2>店舗の QR コード（入口用）</h2>
       <p class="note">お客様が入口の QR を読み取ると注文画面（カート）が開きます。入口のタブレットなどには、表示専用の画面で映してください。</p>
-      <div class="card customer-url">
-        <label for="customer-url"><strong>お客様画面（カート）の URL</strong></label>
-        <div class="actions"><input id="customer-url" type="text" readonly><button id="customer-url-copy" type="button" class="ghost">コピー</button><a id="customer-url-open" class="button-link" href="#" target="_blank" rel="noopener">開く</a></div>
-        <p id="customer-url-note" class="note"></p>
-      </div>
       <p><a id="display-link" href="#" target="_blank" rel="noopener">表示専用の画面を開く（入口のタブレットなどに映す用）</a></p>
+
+      <h2>お客様画面（カート）の URL</h2>
+      <p class="customer-url"><a id="customer-url-open" href="#" target="_blank" rel="noopener"></a> <button id="customer-url-copy" type="button" class="ghost">コピー</button></p>
+      <p id="customer-url-note" class="note"></p>
 
       <h2>店舗の位置（購入時の位置情報の確認）</h2>
       <div class="card form geo-card">
@@ -1366,19 +1364,18 @@ async function loadCustomerUrl() {
   try {
     const { url, rotateMinutes: m } = await api('/api/staff/stores/' + encodeURIComponent(id) + '/customer-url');
     if (id !== $('store').value) return;
-    $('customer-url').value = url;
     $('customer-url-open').href = url;
+    $('customer-url-open').textContent = url;
     $('customer-url-note').textContent = m > 0
       ? 'QR コードの更新が有効なため、この URL は約 ' + m + ' 分ごとに変わります（表示は自動で更新されます）。古い URL からは注文できません。'
       : 'この URL を開くと、お客様と同じカート画面が開きます。';
   } catch { $('customer-url-note').textContent = 'URL を取得できませんでした。'; }
 }
 $('customer-url-copy').onclick = async () => {
-  try { await navigator.clipboard.writeText($('customer-url').value); $('customer-url-copy').textContent = 'コピーしました'; }
-  catch { $('customer-url').select(); document.execCommand && document.execCommand('copy'); $('customer-url-copy').textContent = 'コピーしました'; }
+  try { await navigator.clipboard.writeText($('customer-url-open').href); $('customer-url-copy').textContent = 'コピーしました'; }
+  catch { $('customer-url-copy').textContent = 'コピーできませんでした'; }
   setTimeout(() => { $('customer-url-copy').textContent = 'コピー'; }, 2000);
 };
-$('customer-url').onfocus = () => $('customer-url').select();
 
 function setStore() {
   const s = encodeURIComponent($('store').value);
