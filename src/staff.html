@@ -255,8 +255,7 @@ body.tc-scanning #tc-scan { background: var(--warn); border-color: var(--warn); 
     <!-- 店舗 QR -->
     <section data-panel="qr" hidden>
       <h2>店舗の QR コード（入口用）</h2>
-      <p><a id="qr-link" href="#" target="_blank" rel="noopener"><img id="qr" alt="店舗QRコード" width="240" height="240"></a></p>
-      <p class="note">お客様がこの QR を読み取ると注文画面（カート）が開きます。クリックで印刷用に開きます。</p>
+      <p class="note">お客様が入口の QR を読み取ると注文画面（カート）が開きます。入口のタブレットなどには、表示専用の画面で映してください。</p>
       <p><a id="display-link" href="#" target="_blank" rel="noopener">表示専用の画面を開く（入口のタブレットなどに映す用）</a></p>
 
       <h2>店舗の位置（購入時の位置情報の確認）</h2>
@@ -1209,7 +1208,6 @@ $('passkey-add').onclick = async () => {
 function reloadQrImages() {
   const s = encodeURIComponent($('store').value);
   if (!s) return;
-  $('qr').src = '/staff/qr.svg?store=' + s + '&_=' + Date.now();
   if (rotateMinutes() > 0) {
     for (const img of document.querySelectorAll('.product-admin img')) img.src = img.src.replace(/&_=\d+$/, '') + '&_=' + Date.now();
   }
@@ -1351,8 +1349,6 @@ $('geo-paste-form').onsubmit = async (ev) => {
 
 function setStore() {
   const s = encodeURIComponent($('store').value);
-  $('qr').src = '/staff/qr.svg?store=' + s + '&_=' + Date.now();
-  $('qr-link').href = '/staff/qr.svg?store=' + s;
   $('display-link').href = '/staff/display?store=' + s;
   showRotation();
   resetGeoMap();
