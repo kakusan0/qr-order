@@ -138,6 +138,12 @@
 /* スキャン中：商品の QR を押すと読み取る */
 body.tc-scanning .product-admin img { cursor: crosshair; outline: 3px dashed var(--accent); outline-offset: 4px; border-radius: 6px; }
 body.tc-scanning #tc-scan { background: var(--warn); border-color: var(--warn); }
+
+/* お客様画面の URL */
+.customer-url { display: grid; gap: 8px; margin: 8px 0 12px; }
+.customer-url .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.customer-url input { flex: 1 1 240px; min-width: 0; font-family: ui-monospace, Menlo, monospace; font-size: .9rem; }
+.customer-url .button-link { display: inline-flex; align-items: center; }
 </style>
 </head>
 <body>
@@ -256,6 +262,11 @@ body.tc-scanning #tc-scan { background: var(--warn); border-color: var(--warn); 
     <section data-panel="qr" hidden>
       <h2>店舗の QR コード（入口用）</h2>
       <p class="note">お客様が入口の QR を読み取ると注文画面（カート）が開きます。入口のタブレットなどには、表示専用の画面で映してください。</p>
+      <div class="card customer-url">
+        <label for="customer-url"><strong>お客様画面（カート）の URL</strong></label>
+        <div class="actions"><input id="customer-url" type="text" readonly><button id="customer-url-copy" type="button" class="ghost">コピー</button><a id="customer-url-open" class="button-link" href="#" target="_blank" rel="noopener">開く</a></div>
+        <p id="customer-url-note" class="note"></p>
+      </div>
       <p><a id="display-link" href="#" target="_blank" rel="noopener">表示専用の画面を開く（入口のタブレットなどに映す用）</a></p>
 
       <h2>店舗の位置（購入時の位置情報の確認）</h2>
@@ -1234,6 +1245,7 @@ $('qr-rotation').onchange = async () => {
   }
   showRotation();
   reloadQrImages();
+  loadCustomerUrl();
 };
 
 // ---------- 店舗の位置（地図で選ぶ） ----------
@@ -1347,8 +1359,30 @@ $('geo-paste-form').onsubmit = async (ev) => {
   $('geo-paste').value = '';
 };
 
+// お客様画面（カート）の URL を表示する（QR の定期更新中は、いま使える URL を取り直す）
+async function loadCustomerUrl() {
+  const id = $('store').value;
+  if (!id) return;
+  try {
+    const { url, rotateMinutes: m } = await api('/api/staff/stores/' + encodeURIComponent(id) + '/customer-url');
+    if (id !== $('store').value) return;
+    $('customer-url').value = url;
+    $('customer-url-open').href = url;
+    $('customer-url-note').textContent = m > 0
+      ? 'QR コードの更新が有効なため、この URL は約 ' + m + ' 分ごとに変わります（表示は自動で更新されます）。古い URL からは注文できません。'
+      : 'この URL を開くと、お客様と同じカート画面が開きます。';
+  } catch { $('customer-url-note').textContent = 'URL を取得できませんでした。'; }
+}
+$('customer-url-copy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('customer-url').value); $('customer-url-copy').textContent = 'コピーしました'; }
+  catch { $('customer-url').select(); document.execCommand && document.execCommand('copy'); $('customer-url-copy').textContent = 'コピーしました'; }
+  setTimeout(() => { $('customer-url-copy').textContent = 'コピー'; }, 2000);
+};
+$('customer-url').onfocus = () => $('customer-url').select();
+
 function setStore() {
   const s = encodeURIComponent($('store').value);
+  loadCustomerUrl();
   $('display-link').href = '/staff/display?store=' + s;
   showRotation();
   resetGeoMap();
@@ -1379,7 +1413,7 @@ $('logout').onclick = async () => { try { await post('/api/staff/logout'); } cat
   loadReturns();
   setInterval(loadChat, 6000); // 返信待ちの件数と一覧を更新する
   setInterval(loadReturns, 6000);
-  setInterval(() => { if (rotateMinutes() > 0) reloadQrImages(); }, 15000);
+  setInterval(() => { if (rotateMinutes() > 0) { reloadQrImages(); loadCustomerUrl(); } }, 15000);
 })();
 </script>
 </body>

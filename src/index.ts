@@ -1259,6 +1259,14 @@ function qrSvg(c: C, url: string) {
   return c.body(qr.createSvgTag({ cellSize: 8, margin: 32, scalable: true }), 200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-store' });
 }
 
+// お客様画面（カート）の URL。QR の定期更新が有効なら、いま使える合言葉付きの URL を返す
+app.get('/api/staff/stores/:id/customer-url', async (c) => {
+  const store = await getStoreQr(c.env, c.req.param('id'));
+  if (!store) return c.json({ error: 'store_not_found' }, 404);
+  c.header('Cache-Control', 'no-store');
+  return c.json({ url: await qrUrl(new URL(c.req.url).origin, store), rotateMinutes: store.qr_rotate_minutes });
+});
+
 app.get('/staff/qr.svg', async (c) => {
   const store = await getStoreQr(c.env, c.req.query('store') ?? '');
   if (!store) return c.text('store not found', 404);
