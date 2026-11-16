@@ -533,17 +533,31 @@
     else raf = requestAnimationFrame(tick);
   }
 
+  // 読み取る QR を映すための、管理画面の商品タブ（大きな QR で表示）
+  let adminWin = null;
+  const resetScreenButton = () => { $('screen-scan').textContent = '画面から読み取る'; $('screen-scan').classList.remove('primary'); };
   async function startScreenScan() {
     unlockAudio();
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       return notice('この端末では画面の読み取りができません。スクリーンショットを「画像から読み取る」で選んでください。', true);
     }
+    // 1 回目：管理画面の商品タブを開く（画面の共有は、そのタブを選んでから始める）
+    if (!adminWin || adminWin.closed) {
+      adminWin = window.open('/staff?tab=products&qr=large&store=' + encodeURIComponent(storeId), 'qr-admin-products');
+      if (!adminWin) return notice('管理画面を開けませんでした。ポップアップを許可してください。', true);
+      $('screen-scan').textContent = '商品タブを共有して読み取りを始める';
+      $('screen-scan').classList.add('primary');
+      $('screen-scan-note').textContent = '管理画面の商品タブを、大きな QR コードで開きました。このボタンを押し、表示される一覧から「店舗管理」のタブを選んで共有してください。';
+      return;
+    }
     if (stream) stopScan();
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      // ブラウザのタブを選びやすくする（この画面自体は一覧に出さない）
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: 'browser' }, audio: false, preferCurrentTab: false, selfBrowserSurface: 'exclude' });
     } catch {
       return notice('画面の共有が許可されませんでした。', true);
     }
+    resetScreenButton();
     screenMode = true;
     stream.getVideoTracks()[0].addEventListener('ended', () => { if (screenMode) stopScan(); }); // ブラウザの「共有を停止」
     lastText = '';
