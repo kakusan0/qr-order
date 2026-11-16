@@ -9,8 +9,8 @@ const MAIL = 'uitoken0001'; // その購入完了メールのリンクの合言�
 const PHOTO = new URL('./photo.jpg', import.meta.url).pathname;
 const IN_STORE = { latitude: 35.7101, longitude: 139.8106, accuracy: 30 };
 const out = [];
-// 電子棚札（E）は機能テストにも 6 件あるので、画面テストは E-07 から数える
-const seq = { E: 6 };
+// 電子棚札（E）は機能テストにも 7 件あるので、画面テストは E-08 から数える
+const seq = { E: 7 };
 const rec = (area, title, expected, ok, actual) => {
   seq[area] = (seq[area] || 0) + 1;
   const id = area + '-' + String(seq[area]).padStart(2, '0');

@@ -235,4 +235,7 @@ rec('E', '存在しない商品・不正な名前には画像を返さない', '
 r = await j('GET', '/p/p-003');
 rec('E', '棚札の QR の短いアドレスは、その商品をカートに入れる画面へ移る', '302 → /s/shop-001?add=p-003', r.status === 302 && (r.loc || '').endsWith('/s/shop-001?add=p-003'), `${r.status} → ${(r.loc || '').replace(B, '')}`);
 
+r = await j('GET', '/wiki', undefined, { cookie: STAFF });
+rec('E', 'ページ一覧（/wiki）に、電子棚札のパス（/esl/、/p/）が載っている', '両方が載っている', typeof r.data === 'string' && r.data.includes('/esl/') && r.data.includes('/p/'), r.status);
+
 fs.writeFileSync(process.env.RESULTS_FILE, JSON.stringify(results, null, 1));

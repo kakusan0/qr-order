@@ -63,6 +63,18 @@
   </section>
 
   <section>
+    <h2>電子棚札（ST-GR29000）</h2>
+    <p class="note">OpenEPaperLink の基地局と、棚札の QR コードが使うアドレスです。設定の手順は docs/esl-setup.md、画像 URL の一覧は管理画面の「店舗 QR」にあります。</p>
+    <table>
+      <thead><tr><th>パス</th><th>内容</th></tr></thead>
+      <tbody>
+        <tr><td><code>/esl/&lt;商品ID&gt;.jpg</code><br><a href="/esl/p-001.jpg">/esl/p-001.jpg</a></td><td>棚札に表示する画像（296×128、商品の QR・商品名・価格）。基地局の「7 - Image URL」に設定する</td></tr>
+        <tr><td><code>/p/&lt;商品ID&gt;</code><br><a href="/p/p-001">/p/p-001</a></td><td>棚札の QR コードに入っている短いアドレス。開くと、その商品をカートに入れたお客様画面に移る</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
     <h2>外部サービスからの通知を受け取る URL</h2>
     <p class="note">ブラウザでは開けません。各サービスの管理画面に登録する URL です。</p>
     <table>
