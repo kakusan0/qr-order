@@ -118,6 +118,35 @@ try {
   rec('K', '入口用 QR の欄と同じデザイン（見出し・リンク・説明）で、PC とスマートフォンで崩れずに表示される', '横にはみ出さない', !spOv && !ov2, `はみ出し PC=${ov2} スマホ=${spOv}`);
   await spc.close();
 
+  // ===== E：電子棚札（管理画面） =====
+  await s.click('[data-tab=orders]'); await s.click('[data-tab=qr]');
+  await s.waitForSelector('.esl-row img'); await s.waitForTimeout(800);
+  const rows = await s.locator('.esl-row').count();
+  const loaded = await s.locator('.esl-row img').evaluateAll((imgs) => imgs.every((i) => i.complete && i.naturalWidth === 296 && i.naturalHeight === 128));
+  rec('E', '「店舗 QR」の「電子棚札」に、商品ごとの表示のプレビューと画像 URL が並ぶ', '商品 5 件、すべて 296×128 で表示', rows === 5 && loaded, `${rows} 件 / 表示=${loaded}`);
+  await s.locator('.esl-row').first().getByRole('button', { name: 'コピー' }).click();
+  const eslUrl = await s.evaluate(() => navigator.clipboard.readText());
+  rec('E', '画像 URL をコピーできる', '/esl/<商品ID>.jpg', /\/esl\/p-00\d\.jpg$/.test(eslUrl), eslUrl.replace(B, ''));
+  // 棚札の画像の QR を実際に読み取り、カートに入るかまで確かめる
+  const decoded = await s.evaluate(async (src) => {
+    await new Promise((ok, ng) => { if (window.jsQR) return ok(); const sc = document.createElement('script'); sc.src = '/vendor/jsQR.js'; sc.onload = ok; sc.onerror = ng; document.head.append(sc); });
+    const im = new Image(); im.src = src; await im.decode();
+    const cv = document.createElement('canvas'); cv.width = im.width * 4; cv.height = im.height * 4; // カメラで写した大きさに近づける
+    const g = cv.getContext('2d'); g.imageSmoothingEnabled = false; g.drawImage(im, 0, 0, cv.width, cv.height);
+    const d = g.getImageData(0, 0, cv.width, cv.height);
+    const qr = window.jsQR(d.data, d.width, d.height);
+    return qr ? qr.data : null;
+  }, B + '/esl/p-003.jpg');
+  rec('E', '棚札の画像の QR コードを読み取れ、中身はその商品の短いアドレス', '/p/p-003', decoded === B + '/p/p-003', (decoded || '読み取れない').replace(B, ''));
+  const shop = await phone.newPage(); watch(shop);
+  await shop.goto(decoded || B + '/p/p-003'); await shop.waitForSelector('#cart-bar:not([hidden])');
+  rec('E', '棚札の QR から開くと、その商品がカートに入る', '緑茶 500ml が 1 点', (await text(shop.locator('#cart-bar'))).includes('150'), await text(shop.locator('#cart-bar')));
+  await shop.close();
+  await s.selectOption('#qr-rotation', { index: 1 }); await s.waitForTimeout(800);
+  const warn = await s.locator('#esl-rotation-warn').isVisible();
+  await s.selectOption('#qr-rotation', '0'); await s.waitForTimeout(800);
+  rec('E', 'QR コードの更新を有効にすると、棚札の QR からは注文できない旨を表示する', '注意を表示、無効に戻すと消える', warn && (await s.locator('#esl-rotation-warn').isHidden()), `表示=${warn}`);
+
   // ===== Q：削除した機能 =====
   await p.goto(B + '/s/shop-001?from=staff'); await p.waitForTimeout(1000);
   const staffTools = await st.newPage(); await staffTools.goto(B + '/s/shop-001?from=staff'); await staffTools.waitForTimeout(1000);

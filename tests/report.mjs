@@ -15,13 +15,14 @@ try { commit = execSync('git rev-parse --short HEAD', { cwd: ROOT }).toString().
 const AREAS = [
   ['B', '購入と決済', 'api'], ['A', '年齢確認', 'api'], ['M', '返金と商品管理', 'api'], ['R', '返品・交換と受付メール', 'api'],
   ['C', '問い合わせ', 'api'], ['S', 'ログインとセキュリティ', 'api'], ['U', '画面の操作', 'ui'], ['K', 'お客様画面の URL（管理画面の「店舗 QR」）', 'ui'],
+  ['E', '電子棚札（ST-GR29000）', 'mixed'],
   ['Q', '削除した機能の確認', 'ui'],
 ];
 const cell = (s) => String(s ?? '').replace(/\|/g, '/').replace(/\s+/g, ' ').trim();
 const by = (a) => results.filter((r) => r.area === a);
 const pass = results.filter((r) => r.result === '合格').length;
 const failed = results.filter((r) => r.result !== '合格');
-const apiCount = results.filter((r) => AREAS.find((x) => x[0] === r.area)?.[2] === 'api').length;
+const apiCount = Number(process.env.API_COUNT) || results.filter((r) => r.kind === 'api').length;
 
 const lines = [];
 lines.push('# QR オーダー テスト結果報告書', '');

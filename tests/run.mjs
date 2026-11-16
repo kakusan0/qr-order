@@ -64,7 +64,7 @@ for (const [kind, file] of [['api', 'api.test.mjs'], ['ui', 'ui.test.mjs']]) {
   console.log(`\n=== ${kind === 'api' ? '機能テスト' : '画面テスト'} ===`);
   const results = path.join(STATE, `results-${kind}.json`);
   await run(file, results);
-  if (fs.existsSync(results)) all.push(...JSON.parse(fs.readFileSync(results, 'utf8')));
+  if (fs.existsSync(results)) all.push(...JSON.parse(fs.readFileSync(results, 'utf8')).map((r) => ({ ...r, kind })));
   else all.push({ id: kind, area: '-', title: file + ' が最後まで実行できる', result: '不合格', actual: '結果なし' });
 }
 fs.writeFileSync(path.join(STATE, 'results.json'), JSON.stringify(all, null, 1));

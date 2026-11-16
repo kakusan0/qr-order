@@ -121,6 +121,12 @@
     .content > section > h2:first-child { margin-top: 0; }
   }
 
+
+/* 電子棚札 */
+.esl-list { display: grid; gap: 14px; margin: 8px 0 20px; }
+.esl-row { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; }
+.esl-row img { width: 296px; max-width: 100%; height: auto; image-rendering: pixelated; border: 6px solid #2b2f2c; border-radius: 10px; background: #fff; }
+.esl-info { display: grid; gap: 4px; flex: 1 1 220px; min-width: 0; }
 </style>
 </head>
 <body>
@@ -232,6 +238,11 @@
       <h2>お客様画面（カート）の URL</h2>
       <p class="customer-url"><a id="customer-url-open" href="#" target="_blank" rel="noopener"></a> <button id="customer-url-copy" type="button" class="ghost">コピー</button></p>
       <p id="customer-url-note" class="note"></p>
+
+      <h2>電子棚札（ST-GR29000）</h2>
+      <p class="note">OpenEPaperLink の基地局で、棚札ごとに「7 - Image URL」を選び、その商品の画像 URL を設定してください（取りに来る間隔は 15〜60 分がおすすめです）。棚札には、商品の QR コード・商品名・価格（税込）が表示されます。管理画面で商品名・価格・販売状態を変えると、次に基地局が取りに来たときに表示が変わります。設定の手順は docs/esl-setup.md にあります。</p>
+      <p id="esl-rotation-warn" class="error" hidden>QR コードの更新が有効なため、棚札の QR コードからは注文できません（期限切れの案内が出ます）。棚札を使う場合は、QR コードの更新を「なし」にしてください。</p>
+      <div id="esl-list" class="esl-list"></div>
 
       <h2>店舗の位置（購入時の位置情報の確認）</h2>
       <div class="card form geo-card">
@@ -435,7 +446,7 @@ function showTab(name, direction) {
   if (name === 'products') loadProducts();
   if (name === 'accounts') loadAccounts();
   if (name === 'chat') loadChat();
-  if (name === 'qr') { initGeoMap(); resetGeoMap(); setTimeout(() => geoMap && geoMap.invalidateSize(), 50); }
+  if (name === 'qr') { loadEsl(); initGeoMap(); resetGeoMap(); setTimeout(() => geoMap && geoMap.invalidateSize(), 50); }
   if (name === 'returns') loadReturns();
   if (name === 'me') loadPasskeys();
 }
@@ -1111,6 +1122,7 @@ $('qr-rotation').onchange = async () => {
   showRotation();
   reloadQrImages();
   loadCustomerUrl();
+  $('esl-rotation-warn').hidden = rotateMinutes() === 0;
 };
 
 // ---------- 店舗の位置（地図で選ぶ） ----------
@@ -1244,9 +1256,37 @@ $('customer-url-copy').onclick = async () => {
   setTimeout(() => { $('customer-url-copy').textContent = 'コピー'; }, 2000);
 };
 
+// 電子棚札：商品ごとの表示のプレビューと、基地局に設定する画像 URL
+async function loadEsl() {
+  const store = $('store').value;
+  if (!store) return;
+  $('esl-rotation-warn').hidden = rotateMinutes() === 0;
+  try {
+    const { products } = await api('/api/staff/products?store=' + encodeURIComponent(store));
+    if (store !== $('store').value) return;
+    $('esl-list').replaceChildren(...(products.length ? products.map((p) => {
+      const url = location.origin + '/esl/' + encodeURIComponent(p.id) + '.jpg';
+      const row = el('div', 'esl-row');
+      const img = el('img'); img.src = url + '?_=' + Date.now(); img.alt = p.name + ' の棚札の表示'; img.width = 296; img.height = 128; img.loading = 'lazy';
+      const info = el('div', 'esl-info');
+      const link = el('a', null, url); link.href = url; link.target = '_blank'; link.rel = 'noopener';
+      const copy = el('button', 'ghost', 'コピー'); copy.type = 'button';
+      copy.onclick = async () => {
+        try { await navigator.clipboard.writeText(url); copy.textContent = 'コピーしました'; } catch { copy.textContent = 'コピーできませんでした'; }
+        setTimeout(() => { copy.textContent = 'コピー'; }, 2000);
+      };
+      const line = el('p', 'customer-url'); line.append(link, copy);
+      info.append(el('strong', null, p.name + (p.available ? '' : '（無効：棚札には「販売停止」と表示）')), line);
+      row.append(img, info);
+      return row;
+    }) : [el('p', 'note', '商品はまだ登録されていません。')]));
+  } catch { $('esl-list').replaceChildren(el('p', 'error', '電子棚札の一覧を取得できません。')); }
+}
+
 function setStore() {
   const s = encodeURIComponent($('store').value);
   loadCustomerUrl();
+  if (!$('esl-list').closest('[data-panel]').hidden) loadEsl();
   $('display-link').href = '/staff/display?store=' + s;
   showRotation();
   resetGeoMap();

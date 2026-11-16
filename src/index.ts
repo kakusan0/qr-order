@@ -10,6 +10,7 @@ import displayHtml from './display.html';
 import guideStaffHtml from './guide-staff.html';
 import wikiHtml from './wiki.html';
 import { receiptHtml, returnAcceptedHtml } from './mail';
+import { renderEsl } from './esl';
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -1265,6 +1266,41 @@ app.get('/api/staff/stores/:id/customer-url', async (c) => {
   if (!store) return c.json({ error: 'store_not_found' }, 404);
   c.header('Cache-Control', 'no-store');
   return c.json({ url: await qrUrl(new URL(c.req.url).origin, store), rotateMinutes: store.qr_rotate_minutes });
+});
+
+// ---------- 電子棚札（OpenEPaperLink） ----------
+// 棚札の QR に入れる短いアドレス。QR を小さくでき、棚札の小さな画面でも読み取りやすい。
+// 読み取ると、その商品をカートに入れるお客様画面へ移る
+app.get('/p/:productId', async (c) => {
+  const p = await c.env.DB.prepare(`SELECT id, store_id FROM products WHERE id = ?`).bind(c.req.param('productId')).first<{ id: string; store_id: string }>();
+  if (!p) return c.redirect('/', 302);
+  return c.redirect(`/s/${encodeURIComponent(p.store_id)}?add=${encodeURIComponent(p.id)}`, 302);
+});
+
+// 棚札に表示する画像（296×128 の JPEG）。基地局が「7 - Image URL」で定期的に取りに来る。
+// 商品名・価格・販売状態が変わらなければ同じ画像（同じ ETag）を返し、作り直しも書き換えもしない
+app.get('/esl/:file', async (c) => {
+  const m = c.req.param('file').match(/^([A-Za-z0-9_-]{1,64})\.jpg$/);
+  if (!m) return c.text('not found', 404);
+  const p = await c.env.DB.prepare(`SELECT id, name, price, tax_rate, age_restricted, available FROM products WHERE id = ?`)
+    .bind(m[1])
+    .first<{ id: string; name: string; price: number; tax_rate: number; age_restricted: number; available: number }>();
+  if (!p) return c.text('not found', 404);
+  const input = {
+    name: p.name, price: p.price, taxRate: p.tax_rate, ageRestricted: p.age_restricted === 1, available: p.available === 1,
+    qrText: `${new URL(c.req.url).origin}/p/${p.id}`,
+  };
+  const etag = '"' + hex(await sha256('esl-v2|' + JSON.stringify(input))).slice(0, 32) + '"';
+  const headers = { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-cache', ETag: etag, 'X-Content-Type-Options': 'nosniff' };
+  if (c.req.header('If-None-Match') === etag) return c.body(null, 304, headers);
+  // 同じ内容の画像は、Cloudflare のキャッシュから返す（作り直しの処理を減らす）
+  const cache = (caches as unknown as { default: Cache }).default;
+  const key = new Request(`https://esl-cache.invalid/${p.id}/${etag.slice(1, -1)}`);
+  const hit = await cache.match(key);
+  if (hit) return c.body(await hit.arrayBuffer(), 200, headers);
+  const jpg = renderEsl(input);
+  c.executionCtx.waitUntil(cache.put(key, new Response(jpg, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=2592000' } })));
+  return c.body(jpg, 200, headers);
 });
 
 app.get('/staff/qr.svg', async (c) => {

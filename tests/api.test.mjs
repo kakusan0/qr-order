@@ -200,4 +200,39 @@ rec('M', '管理者は商品を削除できる', '200', r.status === 200, r.stat
 r = await j('GET', '/api/staff/orders?store=shop-001', undefined, { cookie: STAFF });
 rec('M', '注文一覧に支払い済みの注文と店舗からの距離が表示される', '支払い済みの注文あり、距離あり', r.status === 200 && JSON.stringify(r.data).includes('geoDistance'), `${r.status}`);
 
+// ===== E：電子棚札 =====
+/** JPEG の形式（ベースラインか、幅・高さ、色の間引きの有無）を読む */
+function jpegInfo(buf) {
+  for (let i = 2; i < buf.length - 9; ) {
+    if (buf[i] !== 0xff) return null;
+    const marker = buf[i + 1], len = buf.readUInt16BE(i + 2);
+    if (marker === 0xc0 || marker === 0xc2) {
+      const comps = buf[i + 9];
+      const sampling = [...Array(comps)].map((_, k) => buf[i + 11 + k * 3]);
+      return { baseline: marker === 0xc0, height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7), noSubsampling: sampling.every((v) => v === 0x11) };
+    }
+    i += 2 + len;
+  }
+  return null;
+}
+const eslImg = async (path, headers = {}) => { const res = await fetch(B + path, { headers }); return { status: res.status, type: res.headers.get('content-type'), etag: res.headers.get('etag'), buf: Buffer.from(await res.arrayBuffer()) }; };
+let e1 = await eslImg('/esl/p-001.jpg');
+const info = jpegInfo(e1.buf) || {};
+rec('E', '棚札の画像は、ST-GR29000 の画面と同じ 296×128 のベースライン JPEG（色の間引きなし）', '296×128、ベースライン、4:4:4', e1.status === 200 && e1.type === 'image/jpeg' && info.width === 296 && info.height === 128 && info.baseline && info.noSubsampling, `${e1.status} ${info.width}×${info.height} baseline=${info.baseline} 4:4:4=${info.noSubsampling}`);
+let e2 = await eslImg('/esl/p-001.jpg', { 'If-None-Match': e1.etag });
+rec('E', '内容が変わっていなければ、同じ画像として 304 を返す（基地局の取り直しを減らす）', '304', e2.status === 304, e2.status);
+sql("UPDATE products SET price = 190 WHERE id = 'p-001'");
+e2 = await eslImg('/esl/p-001.jpg', { 'If-None-Match': e1.etag });
+rec('E', '価格を変えると、新しい画像になる', '200、ETag が変わる', e2.status === 200 && e2.etag !== e1.etag, `${e2.status} ETag ${e2.etag === e1.etag ? '同じ' : '変化'}`);
+sql("UPDATE products SET price = 180 WHERE id = 'p-001'");
+await j('POST', '/api/staff/products/p-002/availability', { available: false }, { cookie: STAFF, headers: { Origin: B } });
+const off = await eslImg('/esl/p-002.jpg'); const on = await eslImg('/esl/p-003.jpg');
+await j('POST', '/api/staff/products/p-002/availability', { available: true }, { cookie: STAFF, headers: { Origin: B } });
+rec('E', '無効にした商品の画像も返す（棚札に「販売停止」と表示）', '200 の JPEG', off.status === 200 && off.type === 'image/jpeg' && off.etag !== on.etag, off.status);
+r = await j('GET', '/esl/p-zzz.jpg');
+const bad = await j('GET', '/esl/..%2Fsecret.jpg');
+rec('E', '存在しない商品・不正な名前には画像を返さない', '404', r.status === 404 && bad.status === 404, `${r.status} / ${bad.status}`);
+r = await j('GET', '/p/p-003');
+rec('E', '棚札の QR の短いアドレスは、その商品をカートに入れる画面へ移る', '302 → /s/shop-001?add=p-003', r.status === 302 && (r.loc || '').endsWith('/s/shop-001?add=p-003'), `${r.status} → ${(r.loc || '').replace(B, '')}`);
+
 fs.writeFileSync(process.env.RESULTS_FILE, JSON.stringify(results, null, 1));
