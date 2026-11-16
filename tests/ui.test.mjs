@@ -44,6 +44,7 @@ try {
     await c.close();
   }
   const phone = await b.newContext({ ...devices['Pixel 7'], permissions: ['geolocation'], geolocation: IN_STORE });
+  await phone.grantPermissions(['geolocation'], { origin: B }); // このサイトに位置情報を許可（環境によっては、サイトを指定しないと効かない）
   const p = await phone.newPage(); p.setDefaultTimeout(15000); watch(p);
   await p.goto(B + '/s/shop-001?add=p-003'); await p.waitForSelector('#cart-bar:not([hidden])');
   rec('U', '商品の QR を読み取ると、その商品がカートに入る', 'カートに 1 点', (await text(p.locator('#cart-bar'))).startsWith('1'), await text(p.locator('#cart-bar')));
@@ -67,7 +68,7 @@ try {
   rec('U', '説明が短いときは、送信前に理由を表示する', '「5 文字以上」の案内', e1.includes('5 文字以上'), e1.slice(0, 40));
   await p.fill('#detail', '袋が破れていて中身がこぼれていました'); await p.click('#submit');
   // 受け付けられなかったときは、画面に出た理由を結果に残す
-  await p.waitForSelector('.gate strong', { timeout: 30000 }).catch(async (e) => { throw new Error('返品の申し込みが完了しない（画面の表示：' + (await p.locator('#error').innerText().catch(() => '')) + '）'); });
+  await p.waitForSelector('.gate strong', { timeout: 30000 }).catch(async (e) => { throw new Error('返品の申し込みが完了しない（画面の表示：' + (await p.locator('#error').innerText().catch(() => '')) + ' / 位置情報：' + (await p.locator('#geo-state').innerText().catch(() => '')) + '）'); });
   const done = await text(p.locator('.gate').first());
   rec('U', '写真を付けて返品・交換を申し込める', '受付番号と、受付メールを送った旨', done.includes('受け付けました') && done.includes('受付のメール'), done.slice(0, 50));
   await p.goto(B + '/order/' + OID + '?m=' + MAIL); await p.waitForTimeout(1200);
