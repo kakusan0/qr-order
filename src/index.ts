@@ -56,7 +56,7 @@ type Env = {
   OFF_API_BASE?: string;
 };
 
-type Session = { id: string; username: string; role: 'admin' | 'staff' };
+type Session = { id: string; username: string; role: 'admin' | 'staff'; /** パスキーで本人確認した時刻（ミリ秒） */ authAt: number };
 
 type OrderRow = {
   id: string;
@@ -978,7 +978,7 @@ async function readSession(c: C): Promise<Session | null> {
     .first<{ expires_at: string; id: string; email: string; role: Session['role']; active: number }>();
   // 無効化・削除されたアカウントは即時に使えなくなる
   if (!row || row.expires_at < nowIso() || row.active !== 1) return null;
-  return { id: row.id, username: row.email, role: row.role === 'admin' ? 'admin' : 'staff' };
+  return { id: row.id, username: row.email, role: row.role === 'admin' ? 'admin' : 'staff', authAt: new Date(row.expires_at).getTime() - SESSION_HOURS * 3600_000 };
 }
 
 async function startSession(c: C, staff: { email: string; role: string }) {
@@ -1208,9 +1208,11 @@ app.get('/guide/staff', async (c) => {
 });
 app.get('/guide/staff.html', (c) => c.redirect('/guide/staff', 301));
 
-// ページ一覧：管理画面にログイン（パスキー）している人だけに見せる
+// ページ一覧：開くたびにパスキーでの本人確認を求める（ログイン済みでも、確認から 5 分を過ぎていれば確認し直す）
+const WIKI_REAUTH_MS = 5 * 60_000;
 app.get('/wiki', async (c) => {
-  if (!(await readSession(c))) return c.redirect('/staff/login?next=' + encodeURIComponent('/wiki'));
+  const session = await readSession(c);
+  if (!session || Date.now() - session.authAt > WIKI_REAUTH_MS) return c.redirect('/staff/login?reauth=1&next=' + encodeURIComponent('/wiki'));
   return c.html(wikiHtml, 200, { 'Cache-Control': 'private, no-store', 'X-Frame-Options': 'DENY', 'X-Robots-Tag': 'noindex' });
 });
 app.get('/wiki.html', (c) => c.redirect('/wiki', 301));
