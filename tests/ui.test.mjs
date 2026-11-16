@@ -65,7 +65,9 @@ try {
   await p.check('#agree'); await p.click('#submit'); await p.waitForTimeout(300);
   const e1 = await p.locator('#error').innerText();
   rec('U', '説明が短いときは、送信前に理由を表示する', '「5 文字以上」の案内', e1.includes('5 文字以上'), e1.slice(0, 40));
-  await p.fill('#detail', '袋が破れていて中身がこぼれていました'); await p.click('#submit'); await p.waitForSelector('.gate strong');
+  await p.fill('#detail', '袋が破れていて中身がこぼれていました'); await p.click('#submit');
+  // 受け付けられなかったときは、画面に出た理由を結果に残す
+  await p.waitForSelector('.gate strong', { timeout: 30000 }).catch(async (e) => { throw new Error('返品の申し込みが完了しない（画面の表示：' + (await p.locator('#error').innerText().catch(() => '')) + '）'); });
   const done = await text(p.locator('.gate').first());
   rec('U', '写真を付けて返品・交換を申し込める', '受付番号と、受付メールを送った旨', done.includes('受け付けました') && done.includes('受付のメール'), done.slice(0, 50));
   await p.goto(B + '/order/' + OID + '?m=' + MAIL); await p.waitForTimeout(1200);

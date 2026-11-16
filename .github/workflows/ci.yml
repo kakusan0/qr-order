@@ -47,6 +47,13 @@ jobs:
       - name: Tests (npm test)
         run: npm test
 
+      - name: Logs on failure
+        if: failure()
+        run: |
+          for f in tests/.state/app.log tests/.state/fake-services.log; do
+            [ -f "$f" ] && { echo "== $f"; tail -n 80 "$f"; }
+          done
+
       - name: Test report
         if: always()
         run: |
