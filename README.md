@@ -70,6 +70,8 @@ Stripe 側の設定:
 
 `npm test` で、機能テストと画面テストを自動で実行します（テスト専用のデータベースと、決済・メールの代わりのサーバーを使うので、本番には影響しません）。`npm run report` で、結果からテスト結果報告書 [docs/test-report.md](docs/test-report.md) を作り直します。詳しくは [tests/README.md](tests/README.md)。
 
+GitHub では、main へのプッシュとプルリクエストのたびに、型チェック・部品の脆弱性チェック（`npm audit`、重大度 high 以上で失敗）・`npm test` を自動で実行します（`.github/workflows/ci.yml`、Actions の「Check」）。結果の集計は実行結果のページに表示され、詳細とログは成果物 test-results に残ります。
+
 ## 法令対応
 
 実装済み:

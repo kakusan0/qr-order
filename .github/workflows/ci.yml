@@ -1,0 +1,71 @@
+name: Check
+
+# プッシュとプルリクエストのたびに、型チェック・部品の脆弱性チェック・自動テスト（npm test）を行う。
+# テストは決済・メールの代わりのサーバーとテスト専用のデータベースで動き、本番や秘密の値は使わない。
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['android/**', '**/*.md']
+  pull_request:
+    paths-ignore: ['android/**', '**/*.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      # 本番で使う部品に、重大度 high 以上の既知の脆弱性がないこと
+      - name: Dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Install browser for screen tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Tests (npm test)
+        run: npm test
+
+      - name: Test report
+        if: always()
+        run: |
+          if [ -f tests/.state/results.json ]; then
+            npm run report
+            {
+              echo '## テスト結果'
+              sed -n '/^## 4\./,/^## 5\./p' docs/test-report.md | sed '$d'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            tests/.state/*.json
+            tests/.state/*.log
+            docs/test-report.md
+          if-no-files-found: ignore
+          retention-days: 14
