@@ -56,17 +56,6 @@
       <p id="scan-status" class="note" aria-live="polite">明るい枠の中だけを読み取ります。QR コードまたはバーコード全体が枠に入るように写してください。</p>
       <button id="scan-close" class="wide" type="button" hidden>カメラを止める</button>
     </div>
-    <!-- スタッフ用：店舗管理画面から開いたときだけ表示する -->
-    <div id="staff-tools" class="card staff-tools" hidden>
-      <p class="staff-tools-title"><strong>スタッフ用：画面内の QR コードを読み取る</strong></p>
-      <p class="note">店舗管理画面から開いたときだけ表示されます。この端末の画面に映っている QR コード・バーコード（管理画面の商品 QR など）を、カメラを使わずに読み取れます。</p>
-      <div class="staff-tools-actions">
-        <button id="screen-scan" type="button">画面から読み取る</button>
-        <label class="button-like" for="image-scan">画像から読み取る</label>
-        <input id="image-scan" type="file" accept="image/*" hidden>
-      </div>
-      <p id="screen-scan-note" class="note">「画面から読み取る」を押すと、管理画面の商品タブが読み取り用の大きな QR コードで開きます。続けて、そのタブを選んで共有すると読み取りが始まり、読み取るたびに音が鳴ってカートに入ります。スマートフォンでは、スクリーンショットを「画像から読み取る」で選んでください。</p>
-    </div>
     <p class="note swipe-hint">左へフリックすると、カートを確認できます。</p>
   </section>
 

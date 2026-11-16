@@ -122,21 +122,6 @@
     .content > section > h2:first-child { margin-top: 0; }
   }
 
-/* 読み取り用の表示（お客様の画面の「画面から読み取る」用）：選んだ商品の QR を 1 つだけ大きく出す */
-.qr-large-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 0 0 12px; padding: 12px 16px; border: 1px dashed var(--accent); border-radius: var(--r-md); background: var(--card); }
-.qr-large-bar p { margin: 0; flex: 1 1 260px; }
-.qr-stage { position: sticky; top: 8px; z-index: 3; display: grid; justify-items: center; gap: 8px; margin: 0 0 16px; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--card); box-shadow: var(--shadow-md); }
-.qr-stage figure { margin: 0; display: grid; justify-items: center; gap: 8px; }
-.qr-stage img { width: min(340px, 70vw); height: auto; aspect-ratio: 1; padding: 12px; background: #fff; border-radius: 16px; }
-.qr-stage figcaption { font-size: 1.2rem; font-weight: 800; }
-.stage-btn { display: none; }
-body.qr-large .stage-btn { display: inline-flex; }
-body.qr-large .split { display: block; }
-body.qr-large .split > section[data-admin] { display: none; }
-/* 一覧の小さな QR は隠す（大きく出した 1 つだけを読み取らせる） */
-body.qr-large .product-admin > a { display: none; }
-body.qr-large .product-admin.staged { outline: 3px solid var(--accent); outline-offset: -3px; }
-
 /* テスト用カート */
 .test-cart { margin: 0 0 20px; }
 .tc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -151,7 +136,7 @@ body.qr-large .product-admin.staged { outline: 3px solid var(--accent); outline-
 .tc-amount { min-width: 6ch; text-align: right; font-weight: 700; }
 .tc-total { font-size: 1.15rem; font-weight: 900; margin-bottom: 4px; }
 /* スキャン中：商品の QR を押すと読み取る */
-body.tc-scanning .product-admin img, body.tc-scanning #qr-stage-img { cursor: crosshair; outline: 3px dashed var(--accent); outline-offset: 4px; border-radius: 6px; }
+body.tc-scanning .product-admin img { cursor: crosshair; outline: 3px dashed var(--accent); outline-offset: 4px; border-radius: 6px; }
 body.tc-scanning #tc-scan { background: var(--warn); border-color: var(--warn); }
 </style>
 </head>
@@ -217,15 +202,6 @@ body.tc-scanning #tc-scan { background: var(--warn); border-color: var(--warn); 
           </form>
         </section>
         <section>
-          <div id="qr-large-bar" class="qr-large-bar" hidden>
-            <p><strong>読み取り用の表示です。</strong>お客様の画面の「画面から読み取る」でこのタブを共有し、下の一覧で商品を押すと、その商品の QR コードが大きく表示されて読み取られます（一度に 1 つだけ表示します）。</p>
-            <button id="qr-large-off" type="button" class="ghost">通常の表示に戻す</button>
-          </div>
-          <div id="qr-stage" class="qr-stage" hidden>
-            <p id="qr-stage-empty" class="note">商品を押すと、ここに読み取り用の QR コードが大きく表示されます。</p>
-            <figure id="qr-stage-fig" hidden><img id="qr-stage-img" alt="" width="340" height="340"><figcaption id="qr-stage-name"></figcaption></figure>
-            <button id="qr-stage-clear" type="button" class="ghost" hidden>QR を隠す</button>
-          </div>
           <!-- テスト用カート：この画面の商品 QR を読み取って、お客様のカートと同じ動きを試す（お支払いはしない） -->
           <div id="test-cart" class="card test-cart">
             <div class="tc-head">
@@ -282,8 +258,6 @@ body.tc-scanning #tc-scan { background: var(--warn); border-color: var(--warn); 
       <p><a id="qr-link" href="#" target="_blank" rel="noopener"><img id="qr" alt="店舗QRコード" width="240" height="240"></a></p>
       <p class="note">お客様がこの QR を読み取ると注文画面（カート）が開きます。クリックで印刷用に開きます。</p>
       <p><a id="display-link" href="#" target="_blank" rel="noopener">表示専用の画面を開く（入口のタブレットなどに映す用）</a></p>
-      <p><a id="shop-test-link" href="#" target="_blank" rel="noopener">お客様の画面を開く（スタッフ用：画面内の QR を読み取れます）</a></p>
-      <p class="note">管理画面から開いたときだけ、お客様の画面に「画面から読み取る」「画像から読み取る」が表示されます。この画面に映した商品 QR などを、カメラを使わずにカートへ入れて試せます。</p>
 
       <h2>店舗の位置（購入時の位置情報の確認）</h2>
       <div class="card form geo-card">
@@ -620,30 +594,6 @@ async function refresh() {
 }
 
 // ---------- 商品 ----------
-// 読み取り用の大きな QR 表示（登録フォームを隠し、QR と商品名を大きく並べる）
-function setQrLarge(on) {
-  document.body.classList.toggle('qr-large', on);
-  $('qr-large-bar').hidden = !on;
-  $('qr-stage').hidden = !on;
-  if (!on) clearStage();
-}
-$('qr-large-off').onclick = () => setQrLarge(false);
-// 読み取り用に、選んだ商品の QR コードを 1 つだけ大きく表示する（複数を並べると、どれを読むか決まらないため）
-function showStage(p) {
-  $('qr-stage-img').src = '/staff/product-qr.svg?id=' + encodeURIComponent(p.id) + '&_=' + Date.now();
-  $('qr-stage-img').alt = p.name + ' の QR コード';
-  $('qr-stage-name').textContent = p.name + '　' + yen(p.price);
-  $('qr-stage-fig').hidden = false; $('qr-stage-clear').hidden = false; $('qr-stage-empty').hidden = true;
-  for (const c of document.querySelectorAll('.product-admin')) c.classList.toggle('staged', c.dataset.id === p.id);
-  $('qr-stage').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-}
-function clearStage() {
-  $('qr-stage-img').removeAttribute('src');
-  $('qr-stage-fig').hidden = true; $('qr-stage-clear').hidden = true; $('qr-stage-empty').hidden = false;
-  for (const c of document.querySelectorAll('.product-admin.staged')) c.classList.remove('staged');
-}
-$('qr-stage-clear').onclick = clearStage;
-
 // ---------- テスト用カート（お客様のカートと同じ決まり：販売中の商品だけ、同じ商品は 1 回だけ追加、数量は 20 まで） ----------
 const TC_MAX_QTY = 20;
 const testCart = new Map(); // productId -> qty
@@ -736,7 +686,7 @@ $('tc-clear').onclick = () => { testCart.clear(); renderTestCart(); tcLive('カ�
 // スキャン中は、商品の QR コードを押すと（印刷用に開く代わりに）読み取る
 document.addEventListener('click', (ev) => {
   if (!tcScanning) return;
-  const img = ev.target.closest && ev.target.closest('.product-admin img, #qr-stage-img');
+  const img = ev.target.closest && ev.target.closest('.product-admin img');
   if (!img) return;
   ev.preventDefault();
   tcScanImage(img);
@@ -744,7 +694,6 @@ document.addEventListener('click', (ev) => {
 
 function productCard(p) {
   const c = el('div', 'order product-admin' + (p.available ? '' : ' off'));
-  c.dataset.id = p.id;
   const link = el('a');
   link.href = '/staff/product-qr.svg?id=' + encodeURIComponent(p.id);
   link.target = '_blank';
@@ -765,12 +714,6 @@ function productCard(p) {
     catch (e) { alert('切り替えできませんでした（' + e.message + '）。'); }
     await loadProducts();
   };
-  // 読み取り用の表示のときだけ出す：この商品の QR を大きく表示する
-  const stage = el('button', 'primary stage-btn', 'この QR を大きく表示');
-  stage.type = 'button';
-  stage.disabled = !p.available;
-  stage.onclick = () => showStage(p);
-  row.append(stage);
   row.append(b);
   if (isAdmin()) {
     const edit = el('button', 'ghost', '編集');
@@ -1410,7 +1353,6 @@ function setStore() {
   const s = encodeURIComponent($('store').value);
   $('qr').src = '/staff/qr.svg?store=' + s + '&_=' + Date.now();
   $('qr-link').href = '/staff/qr.svg?store=' + s;
-  $('shop-test-link').href = '/s/' + s + '?from=staff';
   $('display-link').href = '/staff/display?store=' + s;
   showRotation();
   resetGeoMap();
@@ -1435,12 +1377,6 @@ $('logout').onclick = async () => { try { await post('/api/staff/logout'); } cat
   setStore();
   let tab = 'orders';
   try { tab = sessionStorage.getItem('staffTab') || 'orders'; } catch {}
-  // お客様の画面の「画面から読み取る」から開いたとき（?tab=products&qr=large&store=…）：商品タブを、読み取りやすい大きな QR で表示する
-  const q = new URLSearchParams(location.search);
-  if (q.get('store') && stores.some((x) => x.id === q.get('store'))) { $('store').value = q.get('store'); setStore(); }
-  if (q.get('tab') === 'products') tab = 'products';
-  if (q.get('qr') === 'large') setQrLarge(true);
-  if (q.toString()) history.replaceState(null, '', location.pathname);
   showTab(tab === 'accounts' && !isAdmin() ? 'orders' : tab);
   setInterval(refresh, 3000);
   loadChat();

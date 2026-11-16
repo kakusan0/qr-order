@@ -430,12 +430,3 @@ tr.sum td:last-child { font-size: 1.6rem; font-weight: 900; letter-spacing: -.02
 .geo-state { font-weight: 700; color: var(--muted); }
 .geo-state.ok { color: var(--accent); }
 .geo-state.ng { color: var(--warn); }
-
-/* スタッフ用：画面内の QR コードの読み取り（店舗管理画面から開いたときだけ） */
-.staff-tools { margin-top: 14px; border-style: dashed; }
-.staff-tools-title { margin: 0 0 4px; }
-.staff-tools-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
-.staff-tools-actions > * { flex: 1 1 160px; min-height: 44px; font-weight: 700; }
-.button-like { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 16px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--card); color: var(--text); font-weight: 700; cursor: pointer; }
-.scanner.screen .scan-guide { display: none; }
-.scanner.screen video { object-fit: contain; background: #000; }
