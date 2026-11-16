@@ -22,6 +22,7 @@
 <script src="/vendor/leaflet/leaflet.js" defer></script>
 <script src="/geo-parse.js" defer></script>
 <script src="/vendor/zxing.min.js" defer></script>
+<script src="/vendor/jsQR.js" defer></script>
 <script src="/barcode.js" defer></script>
 <script src="/ocr.js" defer></script>
 <script src="/scanview.js" defer></script>
@@ -135,6 +136,23 @@ body.qr-large .split > section[data-admin] { display: none; }
 /* 一覧の小さな QR は隠す（大きく出した 1 つだけを読み取らせる） */
 body.qr-large .product-admin > a { display: none; }
 body.qr-large .product-admin.staged { outline: 3px solid var(--accent); outline-offset: -3px; }
+
+/* テスト用カート */
+.test-cart { margin: 0 0 20px; }
+.tc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.tc-head h3 { margin: 0; }
+.tc-live { margin: 8px 0; padding: 10px 12px; border-radius: var(--r-sm); background: var(--bg); font-weight: 700; }
+.tc-live.ng { color: var(--warn); }
+.tc-lines { display: grid; gap: 6px; margin: 8px 0; }
+.tc-line { display: grid; grid-template-columns: 1fr auto auto auto auto; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.tc-name { display: grid; }
+.tc-q { min-width: 40px; min-height: 40px; padding: 0; font-size: 1.1rem; }
+.tc-qty { min-width: 2ch; text-align: center; font-weight: 800; }
+.tc-amount { min-width: 6ch; text-align: right; font-weight: 700; }
+.tc-total { font-size: 1.15rem; font-weight: 900; margin-bottom: 4px; }
+/* スキャン中：商品の QR を押すと読み取る */
+body.tc-scanning .product-admin img, body.tc-scanning #qr-stage-img { cursor: crosshair; outline: 3px dashed var(--accent); outline-offset: 4px; border-radius: 6px; }
+body.tc-scanning #tc-scan { background: var(--warn); border-color: var(--warn); }
 </style>
 </head>
 <body>
@@ -207,6 +225,18 @@ body.qr-large .product-admin.staged { outline: 3px solid var(--accent); outline-
             <p id="qr-stage-empty" class="note">商品を押すと、ここに読み取り用の QR コードが大きく表示されます。</p>
             <figure id="qr-stage-fig" hidden><img id="qr-stage-img" alt="" width="340" height="340"><figcaption id="qr-stage-name"></figcaption></figure>
             <button id="qr-stage-clear" type="button" class="ghost" hidden>QR を隠す</button>
+          </div>
+          <!-- テスト用カート：この画面の商品 QR を読み取って、お客様のカートと同じ動きを試す（お支払いはしない） -->
+          <div id="test-cart" class="card test-cart">
+            <div class="tc-head">
+              <h3>テスト用カート <span id="tc-count" class="badge" hidden>0</span></h3>
+              <button id="tc-scan" type="button" class="primary" aria-pressed="false">QR をスキャンする</button>
+            </div>
+            <p id="tc-help" class="note">お客様のカートと同じ動きを試せます。「QR をスキャンする」を押してから、下の一覧の商品の QR コードを押すと、その QR を読み取ってカートに入れます。お支払いはできません（注文は作られません）。</p>
+            <p id="tc-live" class="tc-live" aria-live="polite" hidden></p>
+            <div id="tc-lines" class="tc-lines"></div>
+            <div id="tc-summary" class="tc-summary" hidden></div>
+            <div class="actions"><button id="tc-clear" type="button" class="ghost" hidden>カートを空にする</button></div>
           </div>
           <h2>商品一覧 <span id="product-count" class="badge">0</span></h2>
           <p class="note">QR コードを印刷して商品や売り場に貼ってください。お客様が読み取ると、その商品がカートに入ります。「無効」にした商品は読み取ってもカートに入りません。</p>
@@ -614,6 +644,104 @@ function clearStage() {
 }
 $('qr-stage-clear').onclick = clearStage;
 
+// ---------- テスト用カート（お客様のカートと同じ決まり：販売中の商品だけ、同じ商品は 1 回だけ追加、数量は 20 まで） ----------
+const TC_MAX_QTY = 20;
+const testCart = new Map(); // productId -> qty
+let tcScanning = false, tcAudio = null;
+function tcBeep(ok) {
+  try {
+    tcAudio = tcAudio || new (window.AudioContext || window.webkitAudioContext)();
+    const o = tcAudio.createOscillator(), g = tcAudio.createGain();
+    o.frequency.value = ok ? 1320 : 330; g.gain.value = 0.08;
+    o.connect(g).connect(tcAudio.destination); o.start(); o.stop(tcAudio.currentTime + (ok ? 0.12 : 0.25));
+  } catch { /* 音が出せなくても続行 */ }
+  if (navigator.vibrate) navigator.vibrate(ok ? 40 : [60, 60, 60]);
+}
+function tcLive(msg, ok) {
+  $('tc-live').textContent = msg; $('tc-live').hidden = false;
+  $('tc-live').classList.toggle('ng', ok === false);
+}
+function setTcScanning(on) {
+  tcScanning = on;
+  document.body.classList.toggle('tc-scanning', on);
+  $('tc-scan').setAttribute('aria-pressed', String(on));
+  $('tc-scan').textContent = on ? 'スキャンを終える' : 'QR をスキャンする';
+  if (on) tcLive('スキャン中：商品の QR コードを押すと読み取ります。');
+}
+$('tc-scan').onclick = () => setTcScanning(!tcScanning);
+/** 画面に表示している QR コードの画像を、実際に読み取って中身を返す */
+async function readQrImage(img) {
+  const im = new Image();
+  im.src = img.currentSrc || img.src;
+  await im.decode();
+  const c = document.createElement('canvas'); c.width = 480; c.height = 480;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(im, 0, 0, c.width, c.height);
+  const d = g.getImageData(0, 0, c.width, c.height);
+  const qr = window.jsQR && window.jsQR(d.data, d.width, d.height, { inversionAttempts: 'attemptBoth' });
+  return qr ? qr.data : null;
+}
+async function tcScanImage(img) {
+  let text;
+  try { text = await readQrImage(img); } catch { text = null; }
+  if (!text) { tcBeep(false); return tcLive('QR コードを読み取れませんでした。', false); }
+  // お客様のカートと同じく、この店舗の商品 QR（/s/<店舗>?add=<商品>）だけを受け付ける
+  let productId = null;
+  try {
+    const u = new URL(text);
+    if (u.origin === location.origin && u.pathname === '/s/' + encodeURIComponent($('store').value)) productId = u.searchParams.get('add');
+  } catch { /* URL でない QR */ }
+  const p = productId && productList.find((x) => x.id === productId);
+  if (!p) { tcBeep(false); return tcLive('この店舗の商品の QR コードではありません（読み取った内容: ' + text.slice(0, 60) + '）', false); }
+  if (!p.available) { tcBeep(false); return tcLive(p.name + '：この商品は現在販売していません（無効）。', false); }
+  if (testCart.has(p.id)) { tcBeep(false); return tcLive(p.name + ' はすでにカートに入っています。数量は「＋」で変更してください。', false); }
+  testCart.set(p.id, 1);
+  tcBeep(true);
+  tcLive('読み取りました：' + p.name + '（' + yen(p.price) + '）をカートに入れました', true);
+  renderTestCart();
+}
+function renderTestCart() {
+  // 一覧から消えた商品・無効にした商品はカートから外す（お客様のカートと同じ）
+  for (const id of [...testCart.keys()]) { const p = productList.find((x) => x.id === id); if (!p || !p.available) testCart.delete(id); }
+  const lines = [...testCart].map(([id, qty]) => ({ p: productList.find((x) => x.id === id), qty }));
+  $('tc-lines').replaceChildren(...lines.map(({ p, qty }) => {
+    const row = el('div', 'tc-line');
+    const name = el('div', 'tc-name');
+    name.append(el('strong', null, p.name + (p.taxRate === 8 ? ' ※' : '')), el('span', 'note', yen(p.price) + ' × ' + qty));
+    const minus = el('button', 'ghost tc-q', '−'); minus.type = 'button'; minus.setAttribute('aria-label', p.name + ' を 1 つ減らす');
+    minus.onclick = () => { if (qty <= 1) testCart.delete(p.id); else testCart.set(p.id, qty - 1); renderTestCart(); };
+    const q = el('span', 'tc-qty', String(qty));
+    const plus = el('button', 'ghost tc-q', '＋'); plus.type = 'button'; plus.setAttribute('aria-label', p.name + ' を 1 つ増やす');
+    plus.disabled = qty >= TC_MAX_QTY;
+    plus.onclick = () => { testCart.set(p.id, Math.min(TC_MAX_QTY, qty + 1)); renderTestCart(); };
+    row.append(name, minus, q, plus, el('div', 'tc-amount', yen(p.price * qty)));
+    return row;
+  }));
+  const count = lines.reduce((s, l) => s + l.qty, 0);
+  const total = lines.reduce((s, l) => s + l.p.price * l.qty, 0);
+  const byRate = new Map();
+  for (const l of lines) byRate.set(l.p.taxRate, (byRate.get(l.p.taxRate) || 0) + l.p.price * l.qty);
+  const tax = [...byRate].sort((a, b) => a[0] - b[0]).map(([rate, sub]) => rate + '%対象 ' + yen(sub) + '（内消費税 ' + yen(Math.floor((sub * rate) / (100 + rate))) + '）');
+  $('tc-summary').replaceChildren(
+    el('div', 'tc-total', '合計（税込） ' + yen(total) + '　' + count + ' 点'),
+    ...tax.map((t) => el('div', 'note', t)),
+    ...(lines.some((l) => l.p.taxRate === 8) ? [el('div', 'note', '※は軽減税率（8%）対象商品です。')] : []),
+  );
+  $('tc-summary').hidden = lines.length === 0;
+  $('tc-clear').hidden = lines.length === 0;
+  $('tc-count').hidden = count === 0; $('tc-count').textContent = count;
+  if (!lines.length) $('tc-lines').replaceChildren(el('p', 'note', 'カートは空です。'));
+}
+$('tc-clear').onclick = () => { testCart.clear(); renderTestCart(); tcLive('カートを空にしました。'); };
+// スキャン中は、商品の QR コードを押すと（印刷用に開く代わりに）読み取る
+document.addEventListener('click', (ev) => {
+  if (!tcScanning) return;
+  const img = ev.target.closest && ev.target.closest('.product-admin img, #qr-stage-img');
+  if (!img) return;
+  ev.preventDefault();
+  tcScanImage(img);
+}, true);
+
 function productCard(p) {
   const c = el('div', 'order product-admin' + (p.available ? '' : ' off'));
   c.dataset.id = p.id;
@@ -669,6 +797,7 @@ async function loadProducts() {
   try {
     const { products } = await api('/api/staff/products?store=' + encodeURIComponent(store));
     productList = products;
+    renderTestCart();
     $('product-count').textContent = products.length;
     $('products').replaceChildren(...(products.length ? products.map(productCard) : [el('p', 'note', '商品はまだ登録されていません。')]));
   } catch (e) {
