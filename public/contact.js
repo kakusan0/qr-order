@@ -1,6 +1,6 @@
 // お問い合わせチャット（お客様側）。店舗のスタッフは LINE で受け答えする。
-// 注文についての問い合わせは、注文ごとに 1 つのやり取りにまとめる（購入の証明のリンクがあれば、どの端末からでも続きを開ける）。
-// 注文に関係しない問い合わせは「注文は選ばない」で送る（この端末に保存した合言葉で続きを開く）。
+// この画面は、購入の証明（購入完了）の画面か、返品・交換の画面からだけ開く。
+// 問い合わせの対象は、開いた元の画面の注文に決まる（選び直しはしない）。注文ごとに 1 つのやり取りにまとまる。
 (async () => {
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -10,62 +10,32 @@
 
   const storeId = decodeURIComponent(location.pathname.split('/')[2] || '');
   const params = new URLSearchParams(location.search);
-  const urlOrder = params.get('order') || '';
-  // 返品・交換の画面から開いたときは、その注文についての問い合わせだけにする
-  const onlyOrder = params.get('only') === '1' && !!urlOrder;
-  $('back').href = urlOrder ? '/order/' + encodeURIComponent(urlOrder) : '/s/' + encodeURIComponent(storeId);
+  const orderId = params.get('order') || '';
+  const fromReturn = params.get('from') === 'return';
+  $('back').href = !orderId ? '/s/' + encodeURIComponent(storeId) : (fromReturn ? '/return/' : '/order/') + encodeURIComponent(orderId);
+  $('back').setAttribute('aria-label', fromReturn ? '返品・交換の画面へ戻る' : '購入の証明の画面へ戻る');
 
+  const hideForm = (msg) => { $('form').hidden = true; $('empty').hidden = true; showError(msg); };
+  if (!orderId) return hideForm('お問い合わせは、購入の証明の画面、または返品・交換の画面の「店舗にチャットで問い合わせる」から開いてください。');
+
+  // 開いた元の画面の注文（支払いが済んだ、この店舗の注文のみ）
+  let order;
   try {
-    const res = await fetch('/api/stores/' + encodeURIComponent(storeId));
+    const res = await fetch('/api/orders/' + encodeURIComponent(orderId), { cache: 'no-store' });
     if (!res.ok) throw new Error();
-    const { store } = await res.json();
-    $('store-name').textContent = store.name + ' お問い合わせ';
-    document.title = store.name + ' | お問い合わせ';
+    order = await res.json();
+    if (order.status === 'pending' || order.store.id !== storeId) throw new Error();
   } catch {
-    return showError('店舗が見つかりません。注文画面からもう一度開いてください。');
+    return hideForm('注文が見つかりません。購入の証明の画面から開き直してください。');
   }
-
-  // 注文の一覧：この端末で購入した注文（支払いが済んだ、この店舗の注文のみ）と、リンクで開いた注文
-  const select = $('order-select');
-  const orders = new Map();
-  const ids = onlyOrder ? [urlOrder] : [...new Set([urlOrder, ...(window.rememberedOrders ? window.rememberedOrders(storeId) : [])].filter(Boolean))];
-  await Promise.all(ids.map(async (id) => {
-    try {
-      const res = await fetch('/api/orders/' + encodeURIComponent(id), { cache: 'no-store' });
-      if (!res.ok) return;
-      const o = await res.json();
-      if (o.status !== 'pending' && o.store.id === storeId) orders.set(o.id, o);
-    } catch { /* 取得できない注文は一覧に出さない */ }
-  }));
-  const sorted = [...orders.values()].sort((a, b) => String(b.paidAt).localeCompare(String(a.paidAt)));
-  for (const o of sorted) select.append(new Option('注文番号 ' + no(o.pickupNo) + '　' + time(o.paidAt || o.createdAt) + '　¥' + o.total.toLocaleString('ja-JP'), o.id));
-  // 最初は、リンクで開いた注文。なければ、この端末でいちばん新しい注文
-  select.value = urlOrder && orders.has(urlOrder) ? urlOrder : sorted.length ? sorted[0].id : '';
-  if (onlyOrder) {
-    if (!orders.has(urlOrder)) return showError('注文が見つかりません。返品・交換の画面から開き直してください。');
-    for (const opt of [...select.options]) if (opt.value !== urlOrder) opt.remove();
-    select.value = urlOrder;
-    select.disabled = true;
-    const note = $('order-pick').querySelector('.note');
-    if (note) note.textContent = '返品・交換をお申し込みの注文についてのお問い合わせです。';
-    $('back').href = '/return/' + encodeURIComponent(urlOrder);
-  }
+  $('store-name').textContent = order.store.name + ' お問い合わせ';
+  document.title = order.store.name + ' | お問い合わせ';
+  $('order-summary').textContent = '注文番号 ' + no(order.pickupNo) + '　' + time(order.paidAt || order.createdAt) + '　¥' + order.total.toLocaleString('ja-JP');
   $('order-pick').hidden = false;
+  if (window.rememberOrder) window.rememberOrder(storeId, orderId);
 
-  // 注文に紐づかない問い合わせの合言葉
-  const generalKey = 'chat:' + storeId;
-  let general = null;
-  try { general = JSON.parse(localStorage.getItem(generalKey) || 'null'); } catch { /* 新しく始める */ }
-
-  let lastId = 0, seen = new Set(), loading = 0;
-  function reset() {
-    lastId = 0; seen = new Set();
-    $('log').replaceChildren(); $('empty').hidden = false;
-    const o = orders.get(select.value);
-    $('order-note').textContent = o
-      ? '注文番号 ' + no(o.pickupNo) + ' についてのやり取りです。この注文の問い合わせは、すべてここにまとまります。'
-      : '特定の注文に関係しないお問い合わせです。';
-  }
+  let lastId = 0;
+  const seen = new Set();
   function add(m) {
     if (seen.has(m.id)) return;
     seen.add(m.id);
@@ -77,20 +47,12 @@
     row.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }
   async function load() {
-    const ticket = ++loading;
-    const orderId = select.value;
     try {
-      let res;
-      if (orderId) res = await fetch('/api/orders/' + encodeURIComponent(orderId) + '/chat?after=' + lastId, { cache: 'no-store' });
-      else if (general) res = await fetch('/api/chat/' + encodeURIComponent(general.threadId) + '?after=' + lastId, { headers: { 'X-Chat-Token': general.token }, cache: 'no-store' });
-      else return;
-      if (ticket !== loading || orderId !== select.value) return; // 途中で注文を切り替えた
-      if (!orderId && res.status === 404) { general = null; try { localStorage.removeItem(generalKey); } catch { /* 無視 */ } return; }
+      const res = await fetch('/api/orders/' + encodeURIComponent(orderId) + '/chat?after=' + lastId, { cache: 'no-store' });
       if (!res.ok) return;
       for (const m of (await res.json()).messages) add(m);
     } catch { /* 通信できないときは次の機会に取り直す */ }
   }
-  select.onchange = () => { reset(); load(); };
 
   $('body').addEventListener('input', () => { $('count').textContent = $('body').value.length + ' / 500'; });
   $('form').onsubmit = async (ev) => {
@@ -100,22 +62,11 @@
     const btn = ev.target.querySelector('button');
     btn.disabled = true;
     showError('');
-    const orderId = select.value;
     try {
-      const res = orderId
-        ? await fetch('/api/orders/' + encodeURIComponent(orderId) + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: text }) })
-        : await fetch('/api/stores/' + encodeURIComponent(storeId) + '/chat', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ threadId: general ? general.threadId : undefined, token: general ? general.token : undefined, body: text }),
-        });
+      const res = await fetch('/api/orders/' + encodeURIComponent(orderId) + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: text }) });
       if (res.status === 429) throw new Error('送信の回数が多すぎます。少し待ってからもう一度お試しください。');
       if (!res.ok) throw new Error('送信できませんでした。もう一度お試しください。');
-      const data = await res.json();
-      if (!orderId) {
-        general = { threadId: data.threadId, token: data.token };
-        try { localStorage.setItem(generalKey, JSON.stringify(general)); } catch { /* この画面を開いている間は続けられる */ }
-      }
-      if (orderId === select.value) add(data.message);
+      add((await res.json()).message);
       $('body').value = '';
       $('count').textContent = '0 / 500';
     } catch (e) {
@@ -124,7 +75,6 @@
     btn.disabled = false;
   };
 
-  reset();
   await load();
   // 返信を待つ：画面を見ているあいだだけ、数秒おきに確認する
   setInterval(() => { if (!document.hidden) load(); }, 4000);

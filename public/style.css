@@ -405,6 +405,7 @@ tr.sum td:last-child { font-size: 1.6rem; font-weight: 900; letter-spacing: -.02
 .ret-note { padding: 10px 12px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--text) 5%, transparent); }
 .order-pick { display: grid; gap: 8px; }
 .order-pick select { width: 100%; }
+.order-summary { margin: 0; font-size: 1.05rem; font-weight: 800; }
 
 /* 返品の写真：画面内のカメラ */
 .add-photo.primary-soft { background: var(--brand-1); color: #fff; border-color: transparent; }

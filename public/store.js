@@ -25,8 +25,6 @@
   }
 
   $('store-name').textContent = data.store.name;
-  $('contact-link').href = '/contact/' + encodeURIComponent(storeId);
-  $('contact-icon').href = '/contact/' + encodeURIComponent(storeId);
   // ホーム画面に追加したとき、この店舗の注文画面が開くようにする
   const manifest = document.createElement('link');
   manifest.rel = 'manifest';

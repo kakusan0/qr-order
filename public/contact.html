@@ -20,11 +20,10 @@
   <p id="error" class="error" role="alert" hidden></p>
   <p class="note">店舗のスタッフにメッセージを送れます。返信はこの画面に表示されます。営業時間外や混雑時は、返信に時間がかかることがあります。</p>
   <div id="order-pick" class="card order-pick" hidden>
-    <label for="order-select"><strong>どの注文についてですか</strong></label>
-    <select id="order-select"><option value="">注文は選ばない（そのほかのお問い合わせ）</option></select>
-    <p class="note">注文ごとにやり取りがまとまります。購入完了メールや購入の証明の画面から開くと、その注文が選ばれた状態になります。注文に関係しない問い合わせは「注文は選ばない」を選んでください。</p>
+    <strong>お問い合わせの注文</strong>
+    <p id="order-summary" class="order-summary"></p>
+    <p class="note">この注文についてのやり取りは、すべてここにまとまります。</p>
   </div>
-  <p id="order-note" class="note"></p>
 
   <div id="log" class="chat-log" role="log" aria-live="polite" aria-label="やり取り"></div>
   <p id="empty" class="note">まだメッセージはありません。下の欄からお送りください。</p>
@@ -33,7 +32,7 @@
     <label for="body" class="note">メッセージ（500 文字まで）</label>
     <textarea id="body" rows="3" maxlength="500" required placeholder="例: 購入した商品に不良がありました"></textarea>
     <div class="chat-actions"><span id="count" class="note">0 / 500</span><button class="primary">送信する</button></div>
-    <p class="note">クレジットカード番号・暗証番号・パスワードは書かないでください。送信した内容は、対応のために店舗のスタッフが確認します（<a href="/legal/privacy" target="_blank" rel="noopener">プライバシーポリシー</a>）。この端末でこの画面を開き直すと、やり取りの続きを確認できます。</p>
+    <p class="note">クレジットカード番号・暗証番号・パスワードは書かないでください。送信した内容は、対応のために店舗のスタッフが確認します（<a href="/legal/privacy" target="_blank" rel="noopener">プライバシーポリシー</a>）。購入の証明の画面から開き直すと、やり取りの続きを確認できます。</p>
   </form>
 </main>
 <footer>

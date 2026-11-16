@@ -40,7 +40,7 @@
 
   $('store-name').textContent = data.store.name + ' 返品・交換';
   document.title = data.store.name + ' | 返品・交換のお申し込み';
-  $('contact-link').href = '/contact/' + encodeURIComponent(data.store.id) + '?order=' + encodeURIComponent(orderId) + '&only=1';
+  $('contact-link').href = '/contact/' + encodeURIComponent(data.store.id) + '?order=' + encodeURIComponent(orderId) + '&from=return';
   $('sum-no').textContent = String(data.orderNo ?? '').padStart(3, '0');
   $('sum-total').textContent = yen(data.total);
   $('sum-deadline').textContent = day(data.deadline) + ' まで（お支払いから ' + data.windowDays + ' 日以内）';
