@@ -8,6 +8,7 @@ import loginHtml from './login.html';
 import setupHtml from './setup.html';
 import displayHtml from './display.html';
 import guideStaffHtml from './guide-staff.html';
+import wikiHtml from './wiki.html';
 import { receiptHtml, returnAcceptedHtml } from './mail';
 import {
   generateAuthenticationOptions,
@@ -1206,6 +1207,13 @@ app.get('/guide/staff', async (c) => {
   return c.html(guideStaffHtml, 200, { 'Cache-Control': 'private, no-store', 'X-Frame-Options': 'DENY', 'X-Robots-Tag': 'noindex' });
 });
 app.get('/guide/staff.html', (c) => c.redirect('/guide/staff', 301));
+
+// ページ一覧：管理画面にログイン（パスキー）している人だけに見せる
+app.get('/wiki', async (c) => {
+  if (!(await readSession(c))) return c.redirect('/staff/login?next=' + encodeURIComponent('/wiki'));
+  return c.html(wikiHtml, 200, { 'Cache-Control': 'private, no-store', 'X-Frame-Options': 'DENY', 'X-Robots-Tag': 'noindex' });
+});
+app.get('/wiki.html', (c) => c.redirect('/wiki', 301));
 
 // 画面：未ログインならログイン画面へ
 app.use('/staff', async (c, next) => {
