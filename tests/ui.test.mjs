@@ -44,7 +44,13 @@ try {
     await c.close();
   }
   const phone = await b.newContext({ ...devices['Pixel 7'], permissions: ['geolocation'], geolocation: IN_STORE });
-  await phone.grantPermissions(['geolocation'], { origin: B }); // このサイトに位置情報を許可（環境によっては、サイトを指定しないと効かない）
+  await phone.grantPermissions(['geolocation'], { origin: B });
+  // 店内の現在地を返すようにする。ブラウザの位置情報の模擬は、環境（GitHub Actions など）によって応答しないことがあるため
+  await phone.addInitScript((g) => {
+    const pos = () => ({ coords: { latitude: g.latitude, longitude: g.longitude, accuracy: g.accuracy }, timestamp: Date.now() });
+    navigator.geolocation.getCurrentPosition = (ok) => setTimeout(() => ok(pos()), 10);
+    navigator.geolocation.watchPosition = (ok) => { setTimeout(() => ok(pos()), 10); return 1; };
+  }, IN_STORE);
   const p = await phone.newPage(); p.setDefaultTimeout(15000); watch(p);
   await p.goto(B + '/s/shop-001?add=p-003'); await p.waitForSelector('#cart-bar:not([hidden])');
   rec('U', '商品の QR を読み取ると、その商品がカートに入る', 'カートに 1 点', (await text(p.locator('#cart-bar'))).startsWith('1'), await text(p.locator('#cart-bar')));
