@@ -3,3 +3,8 @@
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
   Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://js.stripe.com https://challenges.cloudflare.com; worker-src 'self'; frame-src https://js.stripe.com https://hooks.stripe.com https://challenges.cloudflare.com; connect-src 'self' https://api.stripe.com; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; manifest-src 'self'; base-uri 'self'; form-action 'self'
+
+/download/*.apk
+  Content-Type: application/vnd.android.package-archive
+  Content-Disposition: attachment; filename="qr-order-staff.apk"
+  Cache-Control: no-cache

@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>店舗管理 Android アプリ ダウンロード</title>
+  <link rel="icon" href="/icons/staff-192.png" />
+  <style>
+    :root {
+      --bg: #f4f5f2;
+      --surface: #ffffff;
+      --surface-alt: #ecefe9;
+      --ink: #161816;
+      --muted: #5a635d;
+      --accent: #0a6b50;
+      --accent-hover: #085640;
+      --accent-soft: #e1f2ec;
+      --border: #d9dfd9;
+      --warn-bg: #fff4ec;
+      --warn-ink: #8a3416;
+      --warn-border: #f2c8b4;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #101311;
+        --surface: #181d1a;
+        --surface-alt: #212824;
+        --ink: #edf2ee;
+        --muted: #9aa79f;
+        --accent: #55d6a8;
+        --accent-hover: #70e0b8;
+        --accent-soft: #13382c;
+        --border: #2a332d;
+        --warn-bg: #2e1b14;
+        --warn-ink: #ffad8f;
+        --warn-border: #5a3122;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 24px 16px 56px;
+    }
+    .hero {
+      text-align: center;
+      padding: 20px 0 18px;
+    }
+    .app-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: 18px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+      margin-bottom: 12px;
+    }
+    .badge {
+      display: inline-block;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 8px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+    }
+    .subtitle {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+      margin-top: 16px;
+    }
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      font-weight: 800;
+    }
+    .btn-primary {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      padding: 16px 20px;
+      border-radius: 14px;
+      background: var(--accent);
+      color: #ffffff;
+      font-size: 17px;
+      font-weight: 800;
+      text-decoration: none;
+      text-align: center;
+      transition: background 0.15s ease, transform 0.1s ease;
+    }
+    @media (prefers-color-scheme: dark) {
+      .btn-primary { color: #0b1b15; }
+    }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-primary:active { transform: scale(0.99); }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .meta-item {
+      background: var(--surface-alt);
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+    .meta-label {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .meta-value {
+      font-size: 14px;
+      font-weight: 700;
+      margin-top: 2px;
+      word-break: break-all;
+    }
+    .qr-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      text-align: center;
+    }
+    .qr-frame {
+      background: #ffffff;
+      padding: 12px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      display: inline-block;
+    }
+    .qr-frame img {
+      display: block;
+      width: 196px;
+      height: 196px;
+    }
+    .qr-caption {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0;
+    }
+    ol.steps {
+      margin: 0;
+      padding-left: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-size: 14px;
+    }
+    ol.steps li strong {
+      color: var(--ink);
+    }
+    .notice {
+      background: var(--warn-bg);
+      color: var(--warn-ink);
+      border: 1px solid var(--warn-border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 13px;
+      margin-top: 14px;
+    }
+    .hash {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: var(--surface-alt);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+    .footer-links {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 13px;
+    }
+    .footer-links a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .footer-links a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <img class="app-icon" src="/icons/staff-192.png" alt="店舗管理アイコン" />
+      <div><span class="badge">Android ネイティブアプリ</span></div>
+      <h1>店舗管理 APK 配布ページ</h1>
+      <p class="subtitle">注文管理・バーコード商品登録・返品対応・店舗 QR・パスキー認証対応</p>
+    </header>
+
+    <section class="card">
+      <a class="btn-primary" href="/download/qr-order-staff.apk" download="qr-order-staff.apk">
+        <span>APK をダウンロード（12.2 MB）</span>
+      </a>
+
+      <div class="meta-grid">
+        <div class="meta-item">
+          <div class="meta-label">バージョン</div>
+          <div class="meta-value">v1.0.2 (Release)</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">ファイルサイズ</div>
+          <div class="meta-value">12.20 MB</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">対応 Android</div>
+          <div class="meta-value">Android 8.0 以上</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">更新日時</div>
+          <div class="meta-value">2026/11/27 12:47</div>
+        </div>
+      </div>
+
+      <div class="hash">
+        Package: dev.workers.gmakihiro.qrorder.staff<br />
+        APK SHA-256: 5ffea1bf11ea88cbf0e9dc84e8d0fcf740967e8ff17af902c294a4c164a052ea
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>スマホで読み取って開く</h2>
+      <div class="qr-box">
+        <div class="qr-frame">
+          <img src="/download/qr.svg" alt="ダウンロードページの QR コード" />
+        </div>
+        <p class="qr-caption">パソコンで開いている場合は、Android スマホのカメラでこの QR コードを読み取るとすぐにダウンロードできます。</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>インストール手順</h2>
+      <ol class="steps">
+        <li>上の <strong>「APK をダウンロード」</strong> をタップして <code>qr-order-staff.apk</code> を保存します。</li>
+        <li>ダウンロード完了通知、または「ファイル（Files）」アプリのダウンロード一覧から <strong><code>qr-order-staff.apk</code></strong> をタップします。</li>
+        <li>初回のみ「この提供元のアプリを許可」の確認が出たら、<strong>許可をオン</strong>にして「インストール」をタップします。</li>
+        <li><strong>Google Play プロテクトの警告が出た場合：</strong><br />
+          画面内の <strong>「詳細（詳細を表示）」→「インストールする（安全ではない）」</strong> をタップしてください（Google Play ストア外から自社配布するアプリでは必ず表示されます）。<br />
+          ※「インストールする」が表示されない場合は、<strong>Google Play ストア → 右上のアイコン → Play プロテクト → 右上の⚙ →「Play プロテクトによるアプリのスキャン」を一時的にオフ</strong>にしてインストールし、完了後にオンへ戻してください。
+        </li>
+        <li>アプリ <strong>「店舗管理」</strong> を起動し、<strong>「パスキーでログイン（推奨）」</strong> からログインしてください。</li>
+      </ol>
+      <div class="notice">
+        ※ すでに同じサーバーでパスキーを登録済みの Google アカウント（または別端末のパスキー）があれば、インストール直後からそのままログインできます。
+      </div>
+    </section>
+  </main>
+</body>
+</html>

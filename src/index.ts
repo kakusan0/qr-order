@@ -3,14 +3,7 @@ import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { createMiddleware } from 'hono/factory';
 import qrcode from 'qrcode-generator';
-import staffHtml from './staff.html';
-import loginHtml from './login.html';
-import setupHtml from './setup.html';
-import displayHtml from './display.html';
-import guideStaffHtml from './guide-staff.html';
-import wikiHtml from './wiki.html';
 import { receiptHtml, returnAcceptedHtml } from './mail';
-import { renderEsl } from './esl';
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -966,6 +959,22 @@ const rp = (c: C) => {
   const u = new URL(c.req.url);
   return { rpID: u.hostname, origin: u.origin };
 };
+const androidCertFingerprints = (env: Env): string[] =>
+  (env.ANDROID_CERT_SHA256 ?? '')
+    .split(',')
+    .map((f) => f.trim().toUpperCase())
+    .filter((f) => /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(f));
+const sha256FingerprintToAndroidOrigin = (fp: string): string => {
+  const bytes = fromHex(fp.replace(/:/g, ''));
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  const b64url = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `android:apk-key-hash:${b64url}`;
+};
+const allowedOrigins = (c: C): string[] => [
+  rp(c).origin,
+  ...androidCertFingerprints(c.env).map(sha256FingerprintToAndroidOrigin),
+];
 const codeHash = async (email: string, code: string) => hex(await sha256(`${email}:${code}`));
 
 async function readSession(c: C): Promise<Session | null> {
@@ -1055,7 +1064,7 @@ async function storePasskey(c: C, staffId: string, expectedChallenge: string, re
     result = await verifyRegistrationResponse({
       response: response as RegistrationResponseJSON,
       expectedChallenge,
-      expectedOrigin: rp(c).origin,
+      expectedOrigin: allowedOrigins(c),
       expectedRPID: rp(c).rpID,
       requireUserVerification: true,
     });
@@ -1175,7 +1184,7 @@ app.post('/api/staff/login/verify', async (c) => {
     result = await verifyAuthenticationResponse({
       response: body.response,
       expectedChallenge: ch.challenge,
-      expectedOrigin: rp(c).origin,
+      expectedOrigin: allowedOrigins(c),
       expectedRPID: rp(c).rpID,
       credential: { id: key.id, publicKey: fromHex(key.public_key) as Uint8Array<ArrayBuffer>, counter: key.counter },
       requireUserVerification: true,
@@ -1199,38 +1208,6 @@ app.post('/api/staff/logout', async (c) => {
   return c.json({ ok: true });
 });
 
-app.get('/staff/setup', (c) => c.html(setupHtml, 200, { 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' }));
-app.get('/staff/login', (c) => c.html(loginHtml, 200, { 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' }));
-
-// スタッフ用の操作ガイド：管理画面にログインしている人だけに見せる（未ログインならログイン後にここへ戻す）
-app.get('/guide/staff', async (c) => {
-  if (!(await readSession(c))) return c.redirect('/staff/login?next=' + encodeURIComponent('/guide/staff'));
-  return c.html(guideStaffHtml, 200, { 'Cache-Control': 'private, no-store', 'X-Frame-Options': 'DENY', 'X-Robots-Tag': 'noindex' });
-});
-app.get('/guide/staff.html', (c) => c.redirect('/guide/staff', 301));
-
-// ページ一覧：開くたびにパスキーでの本人確認を求める（ログイン済みでも、確認から 5 分を過ぎていれば確認し直す）
-const WIKI_REAUTH_MS = 5 * 60_000;
-app.get('/wiki', async (c) => {
-  const session = await readSession(c);
-  if (!session || Date.now() - session.authAt > WIKI_REAUTH_MS) return c.redirect('/staff/login?reauth=1&next=' + encodeURIComponent('/wiki'));
-  return c.html(wikiHtml, 200, { 'Cache-Control': 'private, no-store', 'X-Frame-Options': 'DENY', 'X-Robots-Tag': 'noindex' });
-});
-app.get('/wiki.html', (c) => c.redirect('/wiki', 301));
-
-// 画面：未ログインならログイン画面へ
-app.use('/staff', async (c, next) => {
-  const session = await readSession(c);
-  if (!session) return c.redirect('/staff/login');
-  c.set('session', session);
-  await next();
-});
-app.use('/staff/*', async (c, next) => {
-  const session = await readSession(c);
-  if (!session) return c.text('Unauthorized', 401);
-  c.set('session', session);
-  await next();
-});
 // API：ログイン必須。書き込みは同じサイトからの操作に限る（CSRF 対策）
 app.use('/api/staff/*', async (c, next) => {
   const session = await readSession(c);
@@ -1247,7 +1224,6 @@ const adminOnly = createMiddleware<{ Bindings: Env; Variables: { session: Sessio
   await next();
 });
 
-app.get('/staff', (c) => c.html(staffHtml, 200, { 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' }));
 app.get('/api/staff/me', (c) => c.json(c.get('session')));
 
 // ---------- スタッフ：注文 ----------
@@ -1267,61 +1243,6 @@ app.get('/api/staff/stores/:id/customer-url', async (c) => {
   c.header('Cache-Control', 'no-store');
   return c.json({ url: await qrUrl(new URL(c.req.url).origin, store), rotateMinutes: store.qr_rotate_minutes });
 });
-
-// ---------- 電子棚札（OpenEPaperLink） ----------
-// 棚札の QR に入れる短いアドレス。QR を小さくでき、棚札の小さな画面でも読み取りやすい。
-// 読み取ると、その商品をカートに入れるお客様画面へ移る
-app.get('/p/:productId', async (c) => {
-  const p = await c.env.DB.prepare(`SELECT id, store_id FROM products WHERE id = ?`).bind(c.req.param('productId')).first<{ id: string; store_id: string }>();
-  if (!p) return c.redirect('/', 302);
-  return c.redirect(`/s/${encodeURIComponent(p.store_id)}?add=${encodeURIComponent(p.id)}`, 302);
-});
-
-// 棚札に表示する画像（296×128 の JPEG）。基地局が「7 - Image URL」で定期的に取りに来る。
-// 商品名・価格・販売状態が変わらなければ同じ画像（同じ ETag）を返し、作り直しも書き換えもしない
-app.get('/esl/:file', async (c) => {
-  const m = c.req.param('file').match(/^([A-Za-z0-9_-]{1,64})\.jpg$/);
-  if (!m) return c.text('not found', 404);
-  const p = await c.env.DB.prepare(`SELECT id, name, price, tax_rate, age_restricted, available FROM products WHERE id = ?`)
-    .bind(m[1])
-    .first<{ id: string; name: string; price: number; tax_rate: number; age_restricted: number; available: number }>();
-  if (!p) return c.text('not found', 404);
-  const input = {
-    name: p.name, price: p.price, taxRate: p.tax_rate, ageRestricted: p.age_restricted === 1, available: p.available === 1,
-    qrText: `${new URL(c.req.url).origin}/p/${p.id}`,
-  };
-  const etag = '"' + hex(await sha256('esl-v2|' + JSON.stringify(input))).slice(0, 32) + '"';
-  const headers = { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-cache', ETag: etag, 'X-Content-Type-Options': 'nosniff' };
-  if (c.req.header('If-None-Match') === etag) return c.body(null, 304, headers);
-  // 同じ内容の画像は、Cloudflare のキャッシュから返す（作り直しの処理を減らす）
-  const cache = (caches as unknown as { default: Cache }).default;
-  const key = new Request(`https://esl-cache.invalid/${p.id}/${etag.slice(1, -1)}`);
-  const hit = await cache.match(key);
-  if (hit) return c.body(await hit.arrayBuffer(), 200, headers);
-  const jpg = renderEsl(input);
-  c.executionCtx.waitUntil(cache.put(key, new Response(jpg, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=2592000' } })));
-  return c.body(jpg, 200, headers);
-});
-
-app.get('/staff/qr.svg', async (c) => {
-  const store = await getStoreQr(c.env, c.req.query('store') ?? '');
-  if (!store) return c.text('store not found', 404);
-  c.header('X-QR-Rotate-Minutes', String(store.qr_rotate_minutes));
-  return qrSvg(c, await qrUrl(new URL(c.req.url).origin, store));
-});
-
-// 商品QR：読み取ると注文画面が開き、その商品がカートに入る
-app.get('/staff/product-qr.svg', async (c) => {
-  const product = await c.env.DB.prepare(`SELECT id, store_id FROM products WHERE id = ?`)
-    .bind(c.req.query('id') ?? '')
-    .first<{ id: string; store_id: string }>();
-  const store = product ? await getStoreQr(c.env, product.store_id) : null;
-  if (!product || !store) return c.text('product not found', 404);
-  return qrSvg(c, await qrUrl(new URL(c.req.url).origin, store, product.id));
-});
-
-// 入口のタブレットなどに映しておく、店舗 QR の表示専用画面
-app.get('/staff/display', (c) => c.html(displayHtml, 200, { 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' }));
 
 app.get('/api/staff/stores', async (c) => {
   const { results } = await c.env.DB.prepare(`SELECT id, name, qr_rotate_minutes AS qrRotateMinutes, lat, lng, geofence_m AS geofence FROM stores ORDER BY id`).all();
@@ -2052,13 +1973,13 @@ app.post('/api/staff/accounts', adminOnly, async (c) => {
   await c.env.DB.prepare(`INSERT INTO staff (id, email, role, created_at) VALUES (?, ?, ?, ?)`)
     .bind(crypto.randomUUID(), email, body.role, nowIso())
     .run();
-  // 案内メール。届かなくてもアカウントは作成済みなので、セットアップ画面の URL を口頭などで伝えればよい
-  const url = `${new URL(c.req.url).origin}/staff/setup`;
+  // 案内メール。届かなくてもアカウントは作成済みなので、アプリのダウンロード URL を口頭などで伝えればよい
+  const url = `${new URL(c.req.url).origin}/download`;
   const invited = await sendMail(
     c.env,
     email,
     '【店舗管理】スタッフとして登録されました',
-    `店舗管理画面のスタッフとして登録されました。\n\n次のページを開き、このメールアドレスを入力してセットアップしてください。\n${url}\n\n確認コードがメールで届いたあと、端末にパスキー（指紋・顔・画面ロック）を登録します。以後はパスキーだけでログインできます。`,
+    `店舗管理アプリのスタッフとして登録されました。\n\n次のページから Android 用の店舗管理アプリをインストールし、初回セットアップでこのメールアドレスを入力してください。\n${url}\n\n確認コードがメールで届いたあと、端末にパスキー（指紋・顔・画面ロック）を登録します。以後はパスキーだけでログインできます。`,
   );
   return c.json({ ok: true, invited }, 201);
 });
@@ -2101,58 +2022,26 @@ app.delete('/api/staff/accounts/:id', adminOnly, async (c) => {
 
 // ---------- 画面 ----------
 
-const page = (path: string) => (c: C) => c.env.ASSETS.fetch(new Request(new URL(path, c.req.url)));
-// Android アプリとこのサイトが同じ持ち主であることの証明（Digital Asset Links）。
-// 署名鍵のフィンガープリントが一致するアプリだけが、アドレスバーなしでこのサイトを開ける
+// ---------- Android アプリ連携・APK 配布 ----------
+
+// Android アプリとこのサイトが同じ持ち主であることの証明（Digital Asset Links / パスキー連携）
 app.get('/.well-known/assetlinks.json', (c) => {
-  const fingerprints = (c.env.ANDROID_CERT_SHA256 ?? '')
-    .split(',')
-    .map((f) => f.trim().toUpperCase())
-    .filter((f) => /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(f));
-  const packages = (c.env.ANDROID_PACKAGES || 'dev.workers.gmakihiro.qrorder.staff,dev.workers.gmakihiro.qrorder.customer')
+  const fingerprints = androidCertFingerprints(c.env);
+  const packages = (c.env.ANDROID_PACKAGES || 'dev.workers.gmakihiro.qrorder.staff')
     .split(',')
     .map((p) => p.trim())
     .filter((p) => /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(p));
   const statements = fingerprints.length
     ? packages.map((pkg) => ({
-        relation: ['delegate_permission/common.handle_all_urls'],
+        relation: ['delegate_permission/common.handle_all_urls', 'delegate_permission/common.get_login_creds'],
         target: { namespace: 'android_app', package_name: pkg, sha256_cert_fingerprints: fingerprints },
       }))
     : [];
   return c.json(statements, 200, { 'Cache-Control': 'public, max-age=300' });
 });
 
-// お客様用のアプリ情報（店舗ごと）。ホーム画面に追加すると、その店舗の注文画面が開く
-app.get('/s/:storeId/manifest.webmanifest', async (c) => {
-  const store = await c.env.DB.prepare(`SELECT id, name FROM stores WHERE id = ?`).bind(c.req.param('storeId')).first<{ id: string; name: string }>();
-  if (!store) return c.json({ error: 'store_not_found' }, 404);
-  const start = `/s/${encodeURIComponent(store.id)}`;
-  return c.body(
-    JSON.stringify({
-      id: start,
-      name: `${store.name} ご注文`,
-      short_name: store.name.slice(0, 12),
-      description: '商品をスキャンして、その場でお支払い',
-      lang: 'ja',
-      start_url: start,
-      scope: '/',
-      display: 'standalone',
-      background_color: '#f4f5f2',
-      theme_color: '#0a6b50',
-      icons: [
-        { src: '/icons/app-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-        { src: '/icons/app-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-        { src: '/icons/app-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-      ],
-    }),
-    200,
-    { 'Content-Type': 'application/manifest+json; charset=utf-8', 'Cache-Control': 'no-cache' },
-  );
-});
-app.get('/s/:storeId', page('/store'));
-app.get('/contact/:storeId', page('/contact'));
-app.get('/return/:orderId', page('/return'));
-app.get('/order/:orderId', page('/order'));
+app.get('/', (c) => c.redirect('/download', 302));
+app.get('/download/qr.svg', (c) => qrSvg(c, `${new URL(c.req.url).origin}/download`));
 
 app.all('/api/*', (c) => c.json({ error: 'not_found' }, 404));
 

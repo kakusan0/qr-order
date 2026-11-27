@@ -1,6 +1,6 @@
 name: Android build
 
-# Android アプリ（android/）がビルドできることを確かめ、動作確認用の APK を成果物として残す
+# Android 店舗管理アプリ（android/）の単体テストと APK ビルドを確認する
 on:
   push:
     branches: [main]
@@ -23,10 +23,10 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Build debug APKs
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+      - name: Run unit tests & build debug APK
+        run: ./gradlew testDebugUnitTest assembleDebug --no-daemon --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: debug-apks

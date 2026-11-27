@@ -170,21 +170,27 @@ rec('C', 'スタッフの返信がお客様の画面に届く', '店舗スタッ
 r = await j('POST', `/api/staff/chat/${thread.id}`, { body: 'x' }, { cookie: STAFF, headers: { Origin: 'https://evil.example' } });
 rec('S', '他のサイトからの書き込み（CSRF）を拒否する', '403 forbidden', r.status === 403, `${r.status} ${r.data.error}`);
 
-// ===== 管理画面・ログイン =====
+// ===== 店舗管理 API・Web 画面削除確認 =====
 r = await j('GET', '/staff');
-rec('S', 'ログインしていないと管理画面は開けない', 'ログイン画面へ移動', r.status === 302 && r.loc?.includes('/staff/login'), `${r.status} → ${r.loc}`);
+rec('S', 'Web 版の店舗管理画面（/staff）は削除されており 404 を返す', '404', r.status === 404, r.status);
+r = await j('GET', '/staff/login');
+rec('S', 'Web 版のログイン画面（/staff/login）は削除されており 404 を返す', '404', r.status === 404, r.status);
+r = await j('GET', '/s/shop-001');
+rec('S', 'お客様画面（/s/shop-001）はこのリポジトリから削除されており 404 を返す', '404', r.status === 404, r.status);
 r = await j('GET', '/api/staff/orders?store=shop-001');
 rec('S', 'ログインしていないと管理用のデータは取れない', '401', r.status === 401, r.status);
 r = await j('GET', '/api/staff/orders?store=shop-001', undefined, { cookie: 'staff_session=forged' });
 rec('S', '偽のログイン情報では管理用のデータは取れない', '401', r.status === 401, r.status);
 r = await j('GET', '/guide/staff');
-rec('S', 'スタッフ用ガイドはログインしていないと開けない', 'ログイン画面へ移動', r.status === 302 && r.loc?.includes('next=%2Fguide%2Fstaff'), `${r.status} → ${r.loc}`);
-r = await j('GET', '/guide/staff', undefined, { cookie: STAFF });
-rec('S', 'ログイン中はスタッフ用ガイドを開ける', '200', r.status === 200, r.status);
-r = await j('GET', '/wiki', undefined, { cookie: ADMIN });
-rec('S', 'ページ一覧は、ログイン中でも本人確認から 5 分を過ぎていれば確認し直す', 'ログイン画面（本人確認）へ移動', r.status === 302 && r.loc?.includes('reauth=1'), `${r.status} → ${r.loc}`);
-r = await j('GET', '/wiki', undefined, { cookie: STAFF });
-rec('S', 'ページ一覧は、本人確認の直後なら開ける', '200', r.status === 200, r.status);
+rec('S', 'Web 版のスタッフ用ガイド（/guide/staff）は 404 を返す', '404', r.status === 404, r.status);
+r = await j('GET', '/wiki');
+rec('S', 'ページ一覧（/wiki）は 404 を返す', '404', r.status === 404, r.status);
+r = await j('GET', '/');
+rec('S', 'トップ（/）は Android 店舗管理アプリの配布ページ（/download）へ移動する', '302 → /download', r.status === 302 && r.loc === '/download', `${r.status} → ${r.loc}`);
+r = await j('GET', '/.well-known/assetlinks.json');
+rec('S', 'Digital Asset Links（/.well-known/assetlinks.json）が 200 を返す', '200', r.status === 200, r.status);
+const qrRes = await fetch(B + '/download/qr.svg');
+rec('S', 'APK 配布ページ用の QR（/download/qr.svg）が SVG で返る', '200 image/svg+xml', qrRes.status === 200 && (qrRes.headers.get('content-type') || '').includes('image/svg+xml'), `${qrRes.status} ${qrRes.headers.get('content-type')}`);
 r = await j('POST', '/api/staff/products', { storeId: 'shop-001', name: 'テスト商品', price: 120, taxRate: 8 }, { cookie: STAFF, headers: { Origin: B } });
 rec('M', '一般スタッフは商品を登録できない（管理者のみ）', '403', r.status === 403, r.status);
 r = await j('POST', '/api/staff/products', { storeId: 'shop-001', name: 'テスト商品', price: 120, taxRate: 8, barcode: '4901234567894' }, { cookie: ADMIN, headers: { Origin: B } });
@@ -199,43 +205,5 @@ r = await j('DELETE', `/api/staff/products/${P}`, undefined, { cookie: ADMIN, he
 rec('M', '管理者は商品を削除できる', '200', r.status === 200, r.status);
 r = await j('GET', '/api/staff/orders?store=shop-001', undefined, { cookie: STAFF });
 rec('M', '注文一覧に支払い済みの注文と店舗からの距離が表示される', '支払い済みの注文あり、距離あり', r.status === 200 && JSON.stringify(r.data).includes('geoDistance'), `${r.status}`);
-
-// ===== E：電子棚札 =====
-/** JPEG の形式（ベースラインか、幅・高さ、色の間引きの有無）を読む */
-function jpegInfo(buf) {
-  for (let i = 2; i < buf.length - 9; ) {
-    if (buf[i] !== 0xff) return null;
-    const marker = buf[i + 1], len = buf.readUInt16BE(i + 2);
-    if (marker === 0xc0 || marker === 0xc2) {
-      const comps = buf[i + 9];
-      const sampling = [...Array(comps)].map((_, k) => buf[i + 11 + k * 3]);
-      return { baseline: marker === 0xc0, height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7), noSubsampling: sampling.every((v) => v === 0x11) };
-    }
-    i += 2 + len;
-  }
-  return null;
-}
-const eslImg = async (path, headers = {}) => { const res = await fetch(B + path, { headers }); return { status: res.status, type: res.headers.get('content-type'), etag: res.headers.get('etag'), buf: Buffer.from(await res.arrayBuffer()) }; };
-let e1 = await eslImg('/esl/p-001.jpg');
-const info = jpegInfo(e1.buf) || {};
-rec('E', '棚札の画像は、ST-GR29000 の画面と同じ 296×128 のベースライン JPEG（色の間引きなし）', '296×128、ベースライン、4:4:4', e1.status === 200 && e1.type === 'image/jpeg' && info.width === 296 && info.height === 128 && info.baseline && info.noSubsampling, `${e1.status} ${info.width}×${info.height} baseline=${info.baseline} 4:4:4=${info.noSubsampling}`);
-let e2 = await eslImg('/esl/p-001.jpg', { 'If-None-Match': e1.etag });
-rec('E', '内容が変わっていなければ、同じ画像として 304 を返す（基地局の取り直しを減らす）', '304', e2.status === 304, e2.status);
-sql("UPDATE products SET price = 190 WHERE id = 'p-001'");
-e2 = await eslImg('/esl/p-001.jpg', { 'If-None-Match': e1.etag });
-rec('E', '価格を変えると、新しい画像になる', '200、ETag が変わる', e2.status === 200 && e2.etag !== e1.etag, `${e2.status} ETag ${e2.etag === e1.etag ? '同じ' : '変化'}`);
-sql("UPDATE products SET price = 180 WHERE id = 'p-001'");
-await j('POST', '/api/staff/products/p-002/availability', { available: false }, { cookie: STAFF, headers: { Origin: B } });
-const off = await eslImg('/esl/p-002.jpg'); const on = await eslImg('/esl/p-003.jpg');
-await j('POST', '/api/staff/products/p-002/availability', { available: true }, { cookie: STAFF, headers: { Origin: B } });
-rec('E', '無効にした商品の画像も返す（棚札に「販売停止」と表示）', '200 の JPEG', off.status === 200 && off.type === 'image/jpeg' && off.etag !== on.etag, off.status);
-r = await j('GET', '/esl/p-zzz.jpg');
-const bad = await j('GET', '/esl/..%2Fsecret.jpg');
-rec('E', '存在しない商品・不正な名前には画像を返さない', '404', r.status === 404 && bad.status === 404, `${r.status} / ${bad.status}`);
-r = await j('GET', '/p/p-003');
-rec('E', '棚札の QR の短いアドレスは、その商品をカートに入れる画面へ移る', '302 → /s/shop-001?add=p-003', r.status === 302 && (r.loc || '').endsWith('/s/shop-001?add=p-003'), `${r.status} → ${(r.loc || '').replace(B, '')}`);
-
-r = await j('GET', '/wiki', undefined, { cookie: STAFF });
-rec('E', 'ページ一覧（/wiki）に、電子棚札のパス（/esl/、/p/）が載っている', '両方が載っている', typeof r.data === 'string' && r.data.includes('/esl/') && r.data.includes('/p/'), r.status);
 
 fs.writeFileSync(process.env.RESULTS_FILE, JSON.stringify(results, null, 1));

@@ -59,9 +59,9 @@ const run = (file, results) => new Promise((resolve) => {
   child.on('exit', resolve);
 });
 const all = [];
-for (const [kind, file] of [['api', 'api.test.mjs'], ['ui', 'ui.test.mjs']]) {
+for (const [kind, file] of [['api', 'api.test.mjs']]) {
   if (only && only !== kind) continue;
-  console.log(`\n=== ${kind === 'api' ? '機能テスト' : '画面テスト'} ===`);
+  console.log(`\n=== 機能テスト ===`);
   const results = path.join(STATE, `results-${kind}.json`);
   await run(file, results);
   if (fs.existsSync(results)) all.push(...JSON.parse(fs.readFileSync(results, 'utf8')).map((r) => ({ ...r, kind })));
