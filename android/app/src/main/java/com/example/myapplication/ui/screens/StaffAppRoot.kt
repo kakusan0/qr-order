@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.BrightnessAuto
@@ -40,7 +42,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +63,7 @@ import com.example.myapplication.ui.components.CountPill
 import com.example.myapplication.ui.components.StatusPill
 import com.example.myapplication.ui.components.WebLoginDialog
 import com.example.myapplication.ui.theme.QrOrderStaffTheme
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -127,6 +132,31 @@ fun StaffAppRoot(
                 onClose = { viewModel.openDisplayQrScreen(false) }
             )
         } else {
+            val visibleTabs = state.visibleTabs
+            val selectedIndex = visibleTabs.indexOf(state.selectedTab).coerceAtLeast(0)
+            val pagerState = rememberPagerState(
+                initialPage = selectedIndex,
+                pageCount = { visibleTabs.size }
+            )
+            val latestSelectedTab by rememberUpdatedState(state.selectedTab)
+
+            LaunchedEffect(selectedIndex, visibleTabs) {
+                if (selectedIndex in visibleTabs.indices && pagerState.currentPage != selectedIndex) {
+                    pagerState.animateScrollToPage(selectedIndex)
+                }
+            }
+
+            LaunchedEffect(pagerState, visibleTabs) {
+                snapshotFlow { pagerState.settledPage }
+                    .distinctUntilChanged()
+                    .collect { page ->
+                        val tab = visibleTabs.getOrNull(page) ?: return@collect
+                        if (tab != latestSelectedTab) {
+                            viewModel.selectTab(tab)
+                        }
+                    }
+            }
+
             Scaffold(
                 containerColor = MaterialTheme.colorScheme.background,
                 snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -225,23 +255,23 @@ fun StaffAppRoot(
                             }
                         )
 
-                        val visibleTabs = state.visibleTabs
-                        val selectedIndex = visibleTabs.indexOf(state.selectedTab).coerceAtLeast(0)
+                        val activeTabIndex = pagerState.currentPage.coerceIn(0, (visibleTabs.size - 1).coerceAtLeast(0))
                         Surface(color = MaterialTheme.colorScheme.surface) {
                             PrimaryScrollableTabRow(
-                                selectedTabIndex = selectedIndex,
+                                selectedTabIndex = activeTabIndex,
                                 containerColor = MaterialTheme.colorScheme.surface,
                                 edgePadding = 12.dp
                             ) {
-                                visibleTabs.forEach { tab ->
+                                visibleTabs.forEachIndexed { index, tab ->
                                     val badge = when (tab) {
                                         StaffTab.ORDERS -> state.pendingAgeCheckCount
                                         StaffTab.RETURNS -> state.pendingReturnsCount
                                         StaffTab.CHAT -> state.waitingChatCount
                                         else -> 0
                                     }
+                                    val isSelected = activeTabIndex == index
                                     Tab(
-                                        selected = state.selectedTab == tab,
+                                        selected = isSelected,
                                         onClick = { viewModel.selectTab(tab) },
                                         text = {
                                             Row(
@@ -250,7 +280,7 @@ fun StaffAppRoot(
                                             ) {
                                                 Text(
                                                     text = tab.labelJa,
-                                                    fontWeight = if (state.selectedTab == tab) FontWeight.ExtraBold else FontWeight.Medium
+                                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium
                                                 )
                                                 if (badge > 0) {
                                                     CountPill(
@@ -268,12 +298,14 @@ fun StaffAppRoot(
                     }
                 }
             ) { innerPadding ->
-                Box(
+                HorizontalPager(
+                    state = pagerState,
+                    key = { page -> visibleTabs[page].name },
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
-                ) {
-                    when (state.selectedTab) {
+                ) { page ->
+                    when (visibleTabs[page]) {
                         StaffTab.ORDERS -> OrdersTab(
                             orders = state.orders,
                             isAdmin = session.isAdmin,
