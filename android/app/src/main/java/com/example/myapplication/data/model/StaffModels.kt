@@ -39,7 +39,7 @@ data class Store(
     val lineLinked: Boolean = false,
     val lineLinkCode: String? = null,
     val lineLinkExpiresAt: String? = null,
-    val baseHost: String = "https://qr-order.gmakihiro.workers.dev"
+    val baseHost: String = "https://qr-order.infoapp.org"
 )
 
 enum class OrderStatus(val labelJa: String) {

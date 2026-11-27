@@ -20,7 +20,7 @@ import kotlinx.coroutines.flow.Flow
  * これらのパスと StaffRepository インターフェースをそのまま接続できます。
  */
 object QrOrderApiEndpoints {
-    const val DEFAULT_BASE_URL = "https://qr-order.gmakihiro.workers.dev"
+    const val DEFAULT_BASE_URL = "https://qr-order.infoapp.org"
 
     const val SETUP_REQUEST = "/api/staff/setup/request"
     const val SETUP_VERIFY = "/api/staff/setup/verify"

@@ -190,7 +190,7 @@ fun ConnectionSettingsDialog(
                     value = baseUrl,
                     onValueChange = { baseUrl = it },
                     label = { Text("サーバー URL") },
-                    placeholder = { Text("https://qr-order.gmakihiro.workers.dev") },
+                    placeholder = { Text("https://qr-order.infoapp.org") },
                     singleLine = true,
                     enabled = !useMock,
                     modifier = Modifier.fillMaxWidth()

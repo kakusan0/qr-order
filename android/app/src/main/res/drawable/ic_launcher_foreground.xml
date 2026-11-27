@@ -1,30 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:pathData="M31,63.928c0,0 6.4,-11 12.1,-13.1c7.2,-2.6 26,-1.4 26,-1.4l38.1,38.1L107,108.928l-32,-1L31,63.928z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:endX="85.84757"
-                android:endY="92.4963"
-                android:startX="42.9492"
-                android:startY="49.59793"
-                android:type="linear">
-                <item
-                    android:color="#44000000"
-                    android:offset="0.0" />
-                <item
-                    android:color="#00000000"
-                    android:offset="1.0" />
-            </gradient>
-        </aapt:attr>
-    </path>
+
+    <!-- 落ち影（立体感） -->
+    <path
+        android:fillColor="#26000000"
+        android:pathData="M34,31 H74 C75.5,31 76.6,31.9 77,33.3 L78,41 C78,43.8 76.1,46.2 73.5,46.8 V76.5 C73.5,79.8 70.8,82.5 67.5,82.5 H40.5 C37.2,82.5 34.5,79.8 34.5,76.5 V46.8 C31.9,46.2 30,43.8 30,41 L31,33.3 C31.4,31.9 32.5,31 34,31 Z" />
+
+    <!-- 店舗のオーニング屋根（ベース白） -->
     <path
         android:fillColor="#FFFFFF"
-        android:fillType="nonZero"
-        android:pathData="M65.3,45.828l3.8,-6.6c0.2,-0.4 0.1,-0.9 -0.3,-1.1c-0.4,-0.2 -0.9,-0.1 -1.1,0.3l-3.9,6.7c-6.3,-2.8 -13.4,-2.8 -19.7,0l-3.9,-6.7c-0.2,-0.4 -0.7,-0.5 -1.1,-0.3C38.8,38.328 38.7,38.828 38.9,39.228l3.8,6.6C36.2,49.428 31.7,56.028 31,63.928h46C76.3,56.028 71.8,49.428 65.3,45.828zM43.4,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2c-0.3,-0.7 -0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C45.3,56.528 44.5,57.328 43.4,57.328L43.4,57.328zM64.6,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2s-0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C66.5,56.528 65.6,57.328 64.6,57.328L64.6,57.328z"
-        android:strokeWidth="1"
-        android:strokeColor="#00000000" />
+        android:pathData="M34,28.5 H74 C75.5,28.5 76.6,29.4 77,30.8 L78,38.5 C78,41.8 75.3,44.5 72,44.5 C68.7,44.5 66,41.8 66,38.5 C66,41.8 63.3,44.5 60,44.5 C56.7,44.5 54,41.8 54,38.5 C54,41.8 51.3,44.5 48,44.5 C44.7,44.5 42,41.8 42,38.5 C42,41.8 39.3,44.5 36,44.5 C32.7,44.5 30,41.8 30,38.5 L31,30.8 C31.4,29.4 32.5,28.5 34,28.5 Z" />
+
+    <!-- 屋根ストライプ（ミントグリーンアクセント：2列目・4列目） -->
+    <path
+        android:fillColor="#9AE6CB"
+        android:pathData="M43.5,28.5 H54 V38.5 C54,41.8 51.3,44.5 48,44.5 C44.7,44.5 42,41.8 42,38.5 Z" />
+    <path
+        android:fillColor="#9AE6CB"
+        android:pathData="M64.5,28.5 H74 C75.5,28.5 76.6,29.4 77,30.8 L78,38.5 C78,41.8 75.3,44.5 72,44.5 C68.7,44.5 66,41.8 66,38.5 Z" />
+
+    <!-- 店舗フレーム（下部の建物枠） -->
+    <path
+        android:fillColor="#1A000000"
+        android:pathData="M34,45.5 H74 V75 C74,77.8 71.8,80 69,80 H39 C36.2,80 34,77.8 34,75 Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M34,46.5 V75 C34,77.5 36,79.5 38.5,79.5 H69.5 C72,79.5 74,77.5 74,75 V46.5" />
+
+    <!-- QR コード：左上ファインダー -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.3"
+        android:strokeLineJoin="round"
+        android:pathData="M42.5,49 H49.5 C50.3,49 51,49.7 51,50.5 V57.5 C51,58.3 50.3,59 49.5,59 H42.5 C41.7,59 41,58.3 41,57.5 V50.5 C41,49.7 41.7,49 42.5,49 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44.5,52 H47.5 C47.8,52 48,52.2 48,52.5 V55.5 C48,55.8 47.8,56 47.5,56 H44.5 C44.2,56 44,55.8 44,55.5 V52.5 C44,52.2 44.2,52 44.5,52 Z" />
+
+    <!-- QR コード：右上ファインダー -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.3"
+        android:strokeLineJoin="round"
+        android:pathData="M58.5,49 H65.5 C66.3,49 67,49.7 67,50.5 V57.5 C67,58.3 66.3,59 65.5,59 H58.5 C57.7,59 57,58.3 57,57.5 V50.5 C57,49.7 57.7,49 58.5,49 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M60.5,52 H63.5 C63.8,52 64,52.2 64,52.5 V55.5 C64,55.8 63.8,56 63.5,56 H60.5 C60.2,56 60,55.8 60,55.5 V52.5 C60,52.2 60.2,52 60.5,52 Z" />
+
+    <!-- QR コード：左下ファインダー -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.3"
+        android:strokeLineJoin="round"
+        android:pathData="M42.5,64 H49.5 C50.3,64 51,64.7 51,65.5 V72.5 C51,73.3 50.3,74 49.5,74 H42.5 C41.7,74 41,73.3 41,72.5 V65.5 C41,64.7 41.7,64 42.5,64 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44.5,67 H47.5 C47.8,67 48,67.2 48,67.5 V70.5 C48,70.8 47.8,71 47.5,71 H44.5 C44.2,71 44,70.8 44,70.5 V67.5 C44,67.2 44.2,67 44.5,67 Z" />
+
+    <!-- QR コード：右下データモジュール -->
+    <path
+        android:fillColor="#7CE8C0"
+        android:pathData="M57,63.5 H60.5 C61.1,63.5 61.5,63.9 61.5,64.5 V67.5 C61.5,68.1 61.1,68.5 60.5,68.5 H57 C56.4,68.5 56,68.1 56,67.5 V64.5 C56,63.9 56.4,63.5 57,63.5 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M64.5,63.5 H67 C67.6,63.5 68,63.9 68,64.5 V67.5 C68,68.1 67.6,68.5 67,68.5 H64.5 C63.9,68.5 63.5,68.1 63.5,67.5 V64.5 C63.5,63.9 63.9,63.5 64.5,63.5 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M57,70.5 H60.5 C61.1,70.5 61.5,70.9 61.5,71.5 V74 C61.5,74.6 61.1,75 60.5,75 H57 C56.4,75 56,74.6 56,74 V71.5 C56,70.9 56.4,70.5 57,70.5 Z" />
+    <path
+        android:fillColor="#7CE8C0"
+        android:pathData="M64.5,70.5 H67 C67.6,70.5 68,70.9 68,71.5 V74 C68,74.6 67.6,75 67,75 H64.5 C63.9,75 63.5,74.6 63.5,74 V71.5 C63.5,70.9 63.9,70.5 64.5,70.5 Z" />
 </vector>
