@@ -3,8 +3,14 @@ package com.example.myapplication.ui.components
 import android.annotation.SuppressLint
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -54,11 +60,14 @@ import com.example.myapplication.data.remote.DeviceLocationProvider
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+private const val TAG = "LocationMapPicker"
 private const val DEFAULT_TOKYO_LAT = 35.681236
 private const val DEFAULT_TOKYO_LNG = 139.767125
 
 class LocationMapJsBridge(
-    private val onLocationPicked: (Double, Double) -> Unit
+    private val onLocationPicked: (Double, Double) -> Unit,
+    private val onReady: () -> Unit,
+    private val onError: (String) -> Unit
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -69,6 +78,20 @@ class LocationMapJsBridge(
         }
         mainHandler.post {
             onLocationPicked(lat, lng)
+        }
+    }
+
+    @JavascriptInterface
+    fun onMapReady() {
+        mainHandler.post {
+            onReady()
+        }
+    }
+
+    @JavascriptInterface
+    fun onMapError(message: String) {
+        mainHandler.post {
+            onError(message)
         }
     }
 }
@@ -200,25 +223,51 @@ fun LocationMapPickerDialog(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
                 ) {
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
                         factory = { ctx ->
-                            val bridge = LocationMapJsBridge { lat, lng ->
-                                selectedLat = lat
-                                selectedLng = lng
-                            }
+                            val bridge = LocationMapJsBridge(
+                                onLocationPicked = { lat, lng ->
+                                    selectedLat = lat
+                                    selectedLng = lng
+                                },
+                                onReady = {
+                                    isMapReady = true
+                                },
+                                onError = { msg ->
+                                    isMapReady = true
+                                    statusMessage = msg
+                                }
+                            )
                             WebView(ctx).apply {
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                )
                                 settings.javaScriptEnabled = true
                                 settings.domStorageEnabled = true
+                                settings.cacheMode = WebSettings.LOAD_DEFAULT
                                 settings.allowFileAccess = false
                                 settings.allowContentAccess = false
                                 addJavascriptInterface(bridge, "AndroidMapBridge")
-                                webChromeClient = WebChromeClient()
+                                webChromeClient = object : WebChromeClient() {
+                                    override fun onConsoleMessage(cm: ConsoleMessage?): Boolean {
+                                        if (cm != null) {
+                                            Log.d(TAG, "JS [${cm.messageLevel()}]: ${cm.message()} (${cm.lineNumber()})")
+                                        }
+                                        return true
+                                    }
+                                }
                                 webViewClient = object : WebViewClient() {
-                                    override fun onPageFinished(view: WebView?, url: String?) {
-                                        isMapReady = true
+                                    override fun onReceivedError(
+                                        view: WebView?,
+                                        request: WebResourceRequest?,
+                                        error: WebResourceError?
+                                    ) {
+                                        Log.w(TAG, "WebView error url=${request?.url} err=${error?.description}")
                                     }
                                 }
                                 loadDataWithBaseURL(
@@ -236,6 +285,9 @@ fun LocationMapPickerDialog(
                             }
                         }
                     )
+                    if (!isMapReady) {
+                        CircularProgressIndicator()
+                    }
                 }
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -317,12 +369,23 @@ private fun buildMapPickerHtml(
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <link id="leaflet-css" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
   <style>
-    html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #eef1ef; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #eef1ef; }
+    #map { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+    .store-pin {
+      width: 34px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+    }
     #fallback-msg {
       display: none; position: fixed; inset: 0; align-items: center; justify-content: center;
-      padding: 24px; text-align: center; font-family: sans-serif; color: #333;
+      padding: 24px; text-align: center; font-family: sans-serif; color: #333; background: #eef1ef;
+      z-index: 9999;
     }
   </style>
 </head>
@@ -330,6 +393,25 @@ private fun buildMapPickerHtml(
   <div id="map"></div>
   <div id="fallback-msg">地図の読み込みに失敗しました。通信状況をご確認のうえ再度お試しください。</div>
   <script>
+    function showError(msg) {
+      var el = document.getElementById('fallback-msg');
+      el.textContent = msg;
+      el.style.display = 'flex';
+      if (window.AndroidMapBridge && window.AndroidMapBridge.onMapError) {
+        window.AndroidMapBridge.onMapError(msg);
+      }
+    }
+
+    function loadCssFallback() {
+      var link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      document.head.appendChild(link);
+    }
+
+    var cssEl = document.getElementById('leaflet-css');
+    if (cssEl) cssEl.onerror = loadCssFallback;
+
     function loadScript(src, onOk, onErr) {
       var s = document.createElement('script');
       s.src = src;
@@ -339,74 +421,97 @@ private fun buildMapPickerHtml(
     }
 
     function initMap() {
-      if (!window.L) {
-        document.getElementById('fallback-msg').style.display = 'flex';
-        return;
-      }
-      var initLat = $latStr;
-      var initLng = $lngStr;
-      var radiusM = $radiusM;
-
-      var map = L.map('map', { zoomControl: true }).setView([initLat, initLng], 16);
-
-      var gsiStd = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
-        maxZoom: 18,
-        attribution: '&copy; 国土地理院'
-      });
-      var osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; OpenStreetMap contributors'
-      });
-
-      gsiStd.addTo(map);
-      L.control.layers({ '地理院地図': gsiStd, 'OpenStreetMap': osm }, null, { position: 'topright' }).addTo(map);
-
-      var marker = L.marker([initLat, initLng], { draggable: true }).addTo(map);
-      var circle = L.circle([initLat, initLng], {
-        radius: radiusM,
-        color: '#0a6b50',
-        fillColor: '#0a6b50',
-        fillOpacity: 0.16,
-        weight: 2
-      }).addTo(map);
-
-      function notify(lat, lng) {
-        if (window.AndroidMapBridge && window.AndroidMapBridge.onLocationSelected) {
-          window.AndroidMapBridge.onLocationSelected(lat, lng);
+      try {
+        if (!window.L) {
+          showError('地図ライブラリの読み込みに失敗しました。');
+          return;
         }
-      }
+        var initLat = $latStr;
+        var initLng = $lngStr;
+        var radiusM = $radiusM;
 
-      function updatePosition(lat, lng) {
-        marker.setLatLng([lat, lng]);
-        circle.setLatLng([lat, lng]);
-        notify(lat, lng);
-      }
+        var map = L.map('map', { zoomControl: true }).setView([initLat, initLng], 16);
 
-      map.on('click', function(e) {
-        updatePosition(e.latlng.lat, e.latlng.lng);
-      });
+        var gsiStd = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+          maxZoom: 18,
+          attribution: '&copy; 国土地理院'
+        });
+        var osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '&copy; OpenStreetMap contributors'
+        });
 
-      marker.on('dragend', function() {
-        var pos = marker.getLatLng();
-        circle.setLatLng(pos);
-        notify(pos.lat, pos.lng);
-      });
+        gsiStd.addTo(map);
+        L.control.layers({ '地理院地図': gsiStd, 'OpenStreetMap': osm }, null, { position: 'topright' }).addTo(map);
 
-      window.setPin = function(lat, lng, newRadius, recenter) {
-        marker.setLatLng([lat, lng]);
-        circle.setLatLng([lat, lng]);
-        if (typeof newRadius === 'number' && newRadius > 0) {
-          circle.setRadius(newRadius);
+        var pinIcon = L.divIcon({
+          className: '',
+          iconSize: [34, 44],
+          iconAnchor: [17, 42],
+          html: '<div class="store-pin"><svg viewBox="0 0 34 44" width="34" height="44" xmlns="http://www.w3.org/2000/svg"><path d="M17 1C8.2 1 1 8.2 1 17c0 11.2 16 25 16 25s16-13.8 16-25C33 8.2 25.8 1 17 1z" fill="#0a6b50" stroke="#ffffff" stroke-width="2.5"/><circle cx="17" cy="17" r="6" fill="#ffffff"/></svg></div>'
+        });
+
+        var marker = L.marker([initLat, initLng], { draggable: true, icon: pinIcon }).addTo(map);
+        var circle = L.circle([initLat, initLng], {
+          radius: radiusM,
+          color: '#0a6b50',
+          fillColor: '#0a6b50',
+          fillOpacity: 0.16,
+          weight: 2
+        }).addTo(map);
+
+        function notify(lat, lng) {
+          if (window.AndroidMapBridge && window.AndroidMapBridge.onLocationSelected) {
+            window.AndroidMapBridge.onLocationSelected(lat, lng);
+          }
         }
-        if (recenter) {
-          map.setView([lat, lng], Math.max(map.getZoom(), 16));
+
+        function updatePosition(lat, lng) {
+          marker.setLatLng([lat, lng]);
+          circle.setLatLng([lat, lng]);
+          notify(lat, lng);
         }
-      };
+
+        map.on('click', function(e) {
+          updatePosition(e.latlng.lat, e.latlng.lng);
+        });
+
+        marker.on('dragend', function() {
+          var pos = marker.getLatLng();
+          circle.setLatLng(pos);
+          notify(pos.lat, pos.lng);
+        });
+
+        window.setPin = function(lat, lng, newRadius, recenter) {
+          marker.setLatLng([lat, lng]);
+          circle.setLatLng([lat, lng]);
+          if (typeof newRadius === 'number' && newRadius > 0) {
+            circle.setRadius(newRadius);
+          }
+          if (recenter) {
+            map.setView([lat, lng], Math.max(map.getZoom(), 16));
+          }
+          map.invalidateSize();
+        };
+
+        if (window.ResizeObserver) {
+          new ResizeObserver(function() { map.invalidateSize(); }).observe(document.getElementById('map'));
+        }
+        window.addEventListener('resize', function() { map.invalidateSize(); });
+        setTimeout(function() { map.invalidateSize(); }, 150);
+        setTimeout(function() { map.invalidateSize(); }, 500);
+
+        if (window.AndroidMapBridge && window.AndroidMapBridge.onMapReady) {
+          window.AndroidMapBridge.onMapReady();
+        }
+      } catch (err) {
+        showError('地図の初期化エラー: ' + (err && err.message ? err.message : err));
+      }
     }
 
     loadScript('https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js', initMap, function() {
       loadScript('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js', initMap, function() {
-        document.getElementById('fallback-msg').style.display = 'flex';
+        showError('地図の読み込みに失敗しました。通信状況をご確認のうえ再度お試しください。');
       });
     });
   </script>
