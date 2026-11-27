@@ -21,13 +21,24 @@ class ApiConfigStore(context: Context) {
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences("qr_order_staff_prefs", Context.MODE_PRIVATE)
 
-    private val _config = MutableStateFlow(
-        ApiConfig(
-            baseUrl = normalizeBaseUrl(prefs.getString(KEY_BASE_URL, QrOrderApiEndpoints.DEFAULT_BASE_URL).orEmpty()),
+    private val _config = MutableStateFlow(loadInitialConfig())
+    val configFlow: StateFlow<ApiConfig> = _config.asStateFlow()
+
+    private fun loadInitialConfig(): ApiConfig {
+        val raw = prefs.getString(KEY_BASE_URL, QrOrderApiEndpoints.DEFAULT_BASE_URL).orEmpty()
+        var normalized = normalizeBaseUrl(raw)
+        if (normalized == LEGACY_WORKERS_DEV_URL) {
+            normalized = QrOrderApiEndpoints.DEFAULT_BASE_URL
+            prefs.edit {
+                putString(KEY_BASE_URL, normalized)
+                remove(KEY_SESSION_COOKIE)
+            }
+        }
+        return ApiConfig(
+            baseUrl = normalized,
             useMockMode = prefs.getBoolean(KEY_USE_MOCK, false)
         )
-    )
-    val configFlow: StateFlow<ApiConfig> = _config.asStateFlow()
+    }
 
     val baseUrl: String get() = _config.value.baseUrl
     val useMockMode: Boolean get() = _config.value.useMockMode
@@ -54,6 +65,7 @@ class ApiConfigStore(context: Context) {
 
     companion object {
         const val SESSION_COOKIE_NAME = "staff_session"
+        private const val LEGACY_WORKERS_DEV_URL = "https://qr-order.gmakihiro.workers.dev"
         private const val KEY_BASE_URL = "base_url"
         private const val KEY_USE_MOCK = "use_mock"
         private const val KEY_SESSION_COOKIE = "staff_session_cookie"
