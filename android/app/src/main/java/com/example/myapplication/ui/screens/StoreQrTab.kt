@@ -1,5 +1,7 @@
 package com.example.myapplication.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -9,13 +11,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -28,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,11 +43,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.myapplication.data.model.CustomerUrlInfo
 import com.example.myapplication.data.model.Store
+import com.example.myapplication.data.remote.DeviceLocationProvider
+import com.example.myapplication.ui.components.LocationMapPickerDialog
 import com.example.myapplication.ui.components.NoticeBanner
 import com.example.myapplication.ui.components.SectionHeader
 import com.example.myapplication.ui.components.StaffCard
 import com.example.myapplication.ui.components.copyToClipboard
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.Locale
 import kotlin.time.Duration.Companion.seconds
 
 // kakusan0/qr-order サーバー側 ROTATE_CHOICES = [0, 1, 5, 15, 60, 1440] と完全一致
@@ -72,6 +83,7 @@ fun StoreQrTab(
 ) {
     if (store == null) return
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var customerUrlInfo by remember(store.id, store.qrRotateMinutes) {
         mutableStateOf(buildCustomerUrl(store, System.currentTimeMillis() / 1000))
@@ -85,11 +97,46 @@ fun StoreQrTab(
     }
 
     var mapLinkInput by remember(store.id) { mutableStateOf("") }
-    var latText by remember(store.id, store.lat) { mutableStateOf(store.lat?.let { "%.6f".format(it) }.orEmpty()) }
-    var lngText by remember(store.id, store.lng) { mutableStateOf(store.lng?.let { "%.6f".format(it) }.orEmpty()) }
+    var latText by remember(store.id, store.lat) {
+        mutableStateOf(store.lat?.let { String.format(Locale.US, "%.6f", it) }.orEmpty())
+    }
+    var lngText by remember(store.id, store.lng) {
+        mutableStateOf(store.lng?.let { String.format(Locale.US, "%.6f", it) }.orEmpty())
+    }
     var selectedRadiusM by remember(store.id, store.geofenceM) {
         val closest = geofenceRadiusOptions.minByOrNull { kotlin.math.abs(it - store.geofenceM) } ?: 300
         mutableIntStateOf(closest)
+    }
+    var isFetchingGps by remember { mutableStateOf(false) }
+    var showMapPicker by remember { mutableStateOf(false) }
+
+    fun fetchCurrentGpsLocation() {
+        if (isFetchingGps) return
+        scope.launch {
+            isFetchingGps = true
+            DeviceLocationProvider.getCurrentLocation(context)
+                .onSuccess { loc ->
+                    latText = String.format(Locale.US, "%.6f", loc.lat)
+                    lngText = String.format(Locale.US, "%.6f", loc.lng)
+                    val acc = loc.accuracyM?.let { "（精度 約${it}m）" }.orEmpty()
+                    val prefix = if (loc.isLastKnown) "直近の位置を取得しました" else "現在地（GPS）を取得しました"
+                    onShowMessage("$prefix$acc。「この位置で保存」で反映されます。")
+                }
+                .onFailure { err ->
+                    onShowMessage(err.message ?: "GPS で現在地を取得できませんでした")
+                }
+            isFetchingGps = false
+        }
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result.values.any { it }) {
+            fetchCurrentGpsLocation()
+        } else {
+            onShowMessage("位置情報の権限が許可されていません。端末の設定から許可するか、「地図上で選ぶ」をご利用ください。")
+        }
     }
 
     LazyColumn(
@@ -194,6 +241,42 @@ fun StoreQrTab(
         item(key = "geo_card") {
             StaffCard {
                 if (isAdmin) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                if (DeviceLocationProvider.hasLocationPermission(context)) {
+                                    fetchCurrentGpsLocation()
+                                } else {
+                                    locationPermissionLauncher.launch(DeviceLocationProvider.REQUIRED_PERMISSIONS)
+                                }
+                            },
+                            enabled = !isFetchingGps,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            if (isFetchingGps) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(Icons.Default.MyLocation, contentDescription = null)
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (isFetchingGps) "取得中..." else "現在地（GPS）")
+                        }
+                        OutlinedButton(
+                            onClick = { showMapPicker = true },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Map, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("地図上で選ぶ")
+                        }
+                    }
+
                     OutlinedTextField(
                         value = mapLinkInput,
                         onValueChange = { mapLinkInput = it },
@@ -201,33 +284,17 @@ fun StoreQrTab(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                onResolveMapUrl(mapLinkInput) { lat, lng ->
-                                    latText = "%.6f".format(lat)
-                                    lngText = "%.6f".format(lng)
-                                }
-                            },
-                            enabled = mapLinkInput.isNotBlank(),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("リンク／座標を反映")
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                latText = "35.659482"
-                                lngText = "139.700559"
-                                onShowMessage("サンプル座標をセットしました")
+                    OutlinedButton(
+                        onClick = {
+                            onResolveMapUrl(mapLinkInput) { lat, lng ->
+                                latText = String.format(Locale.US, "%.6f", lat)
+                                lngText = String.format(Locale.US, "%.6f", lng)
                             }
-                        ) {
-                            Icon(Icons.Default.MyLocation, contentDescription = null)
-                            Spacer(Modifier.width(4.dp))
-                            Text("サンプル")
-                        }
+                        },
+                        enabled = mapLinkInput.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("リンク／座標を反映")
                     }
 
                     Row(
@@ -317,5 +384,20 @@ fun StoreQrTab(
             }
         }
         item(key = "bottom_pad") { Spacer(Modifier.height(24.dp)) }
+    }
+
+    if (showMapPicker) {
+        LocationMapPickerDialog(
+            initialLat = latText.trim().toDoubleOrNull() ?: store.lat,
+            initialLng = lngText.trim().toDoubleOrNull() ?: store.lng,
+            radiusM = selectedRadiusM,
+            onConfirm = { lat, lng ->
+                latText = String.format(Locale.US, "%.6f", lat)
+                lngText = String.format(Locale.US, "%.6f", lng)
+                showMapPicker = false
+                onShowMessage("地図で選択した位置を反映しました。「この位置で保存」で反映されます。")
+            },
+            onDismiss = { showMapPicker = false }
+        )
     }
 }
